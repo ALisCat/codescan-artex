@@ -10,7 +10,7 @@ import zipfile
 
 EXCLUDE_DIRS = {".git", "target", "build", "node_modules", ".audit", "labels", ".idea", ".vscode"}
 EXCLUDE_NAMES = {"GROUND-TRUTH.csv", "ground-truth.csv", "LABELS.csv", "labels.csv"}
-EXCLUDE_SUFFIX = (".eval", ".label", ".labels")
+EXCLUDE_SUFFIX = (".eval", ".label", ".labels", ".md", ".markdown")
 
 
 def main():

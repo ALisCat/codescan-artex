@@ -14,6 +14,18 @@ from .analyzers.file_upload import FileUploadAnalyzer
 from .analyzers.path_traversal import PathTraversalAnalyzer
 from .analyzers.deserialization import DeserializationAnalyzer
 from .analyzers.xss import XssAnalyzer
+from .analyzers.business_logic import BusinessLogicAnalyzer
+from .analyzers.xxe import XxeAnalyzer
+from .analyzers.csrf import CsrfAnalyzer
+from .analyzers.open_redirect import OpenRedirectAnalyzer
+from .analyzers.ssti import SstiAnalyzer
+from .analyzers.ldap_injection import LdapInjectionAnalyzer
+from .analyzers.mass_assignment import MassAssignmentAnalyzer
+from .analyzers.race_condition import RaceConditionAnalyzer
+from .analyzers.repo.secrets import SecretsAnalyzer
+from .analyzers.repo.crypto import CryptoAnalyzer
+from .analyzers.repo.dependency import DependencyAnalyzer
+from .analyzers.repo.sensitive_data import SensitiveDataAnalyzer
 
 ANALYZERS = {
     "authz": AuthzAnalyzer,
@@ -25,6 +37,18 @@ ANALYZERS = {
     "path-traversal": PathTraversalAnalyzer,
     "deserialization": DeserializationAnalyzer,
     "xss": XssAnalyzer,
+    "business_logic": BusinessLogicAnalyzer,
+    "xxe": XxeAnalyzer,
+    "csrf": CsrfAnalyzer,
+    "open_redirect": OpenRedirectAnalyzer,
+    "ssti": SstiAnalyzer,
+    "ldap_injection": LdapInjectionAnalyzer,
+    "mass_assignment": MassAssignmentAnalyzer,
+    "race_condition": RaceConditionAnalyzer,
+    "secrets": SecretsAnalyzer,
+    "crypto": CryptoAnalyzer,
+    "dependency": DependencyAnalyzer,
+    "sensitive_data": SensitiveDataAnalyzer,
 }
 
 
@@ -44,8 +68,11 @@ def main():
         if not cls:
             raise SystemExit("unknown analyzer: " + name)
         a = cls()
-        for ep in ctx.endpoints():
-            findings.extend(a.analyze(ep, ctx))
+        if getattr(a, "scope", None) == "repo":
+            findings.extend(a.analyze(ctx))
+        else:
+            for ep in ctx.endpoints():
+                findings.extend(a.analyze(ep, ctx))
 
     summary = {}
     for f in findings:

@@ -21,6 +21,11 @@ var cellVulnCN = map[string]string{
 	"file-upload": "文件上传", "path-traversal": "路径穿越", "sql-injection": "SQL 注入",
 	"command-exec": "命令/表达式注入", "ssrf": "SSRF", "deserialization": "不安全反序列化",
 	"xss": "XSS", "authz": "越权", "authn": "认证/回调",
+	"business_logic": "业务逻辑", "xxe": "XXE", "csrf": "CSRF",
+	"open_redirect": "开放重定向", "ssti": "SSTI", "ldap_injection": "LDAP 注入",
+	"mass_assignment": "批量赋值", "race_condition": "竞态条件",
+	"secrets": "硬编码凭据", "crypto": "弱加密", "dependency": "依赖漏洞",
+	"sensitive_data": "敏感数据暴露",
 }
 
 // importCellsBody 是 POST /api/codeaudit/tasks/{id}/import 的请求体。
@@ -82,6 +87,18 @@ var cellChecklistCN = map[string][]string{
 	"xss":             {"输出是否转义", "是否写入可渲染位置", "前端渲染方式"},
 	"authz":           {"是否有 principal 介入数据访问", "归属谓词写在哪（SQL / Java / 注解）", "是否把判定委托给外部服务"},
 	"authn":           {"认证主体从哪里来", "签名/HMAC/时间戳/nonce 是否校验", "回调/登录是否允许匿名调用", "校验逻辑是否真的在请求路径上执行"},
+	"business_logic":  {"请求体是否携带金额/状态/租户/订单标识", "服务端是否重新计算金额和状态", "订单/预约是否绑定 principal", "是否有幂等/重放/状态机保护"},
+	"xxe":             {"XML parser 是否关闭 DOCTYPE/外部实体", "是否设置 ACCESS_EXTERNAL_DTD/SCHEMA", "请求体是否可控"},
+	"csrf":            {"是否使用 Cookie/Session 认证", "状态变更接口是否校验 CSRF token", "SameSite/Origin 校验"},
+	"open_redirect":   {"重定向目标是否来自请求参数", "是否只允许相对路径/白名单域名"},
+	"ssti":            {"模板/表达式引擎是否处理请求数据", "是否使用 Sandbox/白名单"},
+	"ldap_injection":  {"LDAP filter 是否拼接请求输入", "是否使用转义/白名单"},
+	"mass_assignment": {"请求体是否直接绑定实体/含敏感字段", "是否有 DTO/JsonIgnore/只读字段"},
+	"race_condition":  {"库存/号源/挂号/支付是否有锁或幂等", "是否 check-then-act"},
+	"secrets":         {"是否有硬编码 JWT/DB/Redis/API Key", "是否使用环境变量/密钥管理"},
+	"crypto":          {"是否使用 AES/ECB/MD5/SHA1", "密钥是否硬编码", "是否使用 KMS/KeyStore/GCM"},
+	"dependency":      {"是否使用已知 CVE 版本", "是否有升级计划", "是否可达"},
+	"sensitive_data":  {"日志/响应是否包含身份证/手机号/姓名", "是否脱敏/加密"},
 }
 
 // manualAuditBody 是 POST /api/codeaudit/tasks/{id}/cells/audit 的请求体。

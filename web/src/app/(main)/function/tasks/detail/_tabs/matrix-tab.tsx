@@ -49,6 +49,18 @@ const VULNS: VulnDef[] = [
   { key: "file-upload", label: "文件上传" },
   { key: "path-traversal", label: "路径穿越" },
   { key: "xss", label: "XSS" },
+  { key: "business_logic", label: "业务逻辑" },
+  { key: "xxe", label: "XXE" },
+  { key: "csrf", label: "CSRF" },
+  { key: "open_redirect", label: "开放重定向" },
+  { key: "ssti", label: "SSTI" },
+  { key: "ldap_injection", label: "LDAP" },
+  { key: "mass_assignment", label: "批量赋值" },
+  { key: "race_condition", label: "竞态" },
+  { key: "secrets", label: "硬编码凭据" },
+  { key: "crypto", label: "弱加密" },
+  { key: "dependency", label: "依赖漏洞" },
+  { key: "sensitive_data", label: "敏感数据" },
 ];
 
 // 已知类型用中文短名；后续新增类型即使前端还没登记，也先按 key 展示，避免丢列。

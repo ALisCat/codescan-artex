@@ -531,6 +531,24 @@ func writeAuthzModel(b *strings.Builder, h map[string]any) bool {
 }
 
 // writeAuthnModel 渲染认证/签名/回调真实性模型。
+func writeRepoModel(b *strings.Builder, h map[string]any) bool {
+	rm := _asMap(h["repo_model"])
+	if len(rm) == 0 {
+		return false
+	}
+	b.WriteString("\n  【仓库级模型】")
+	fmt.Fprintf(b, "\n   required: %s", strings.Join(_strList(rm["required"]), ", "))
+	gaps := _strList(rm["gaps"])
+	if len(gaps) == 0 {
+		gaps = []string{"none"}
+	}
+	fmt.Fprintf(b, "\n   gaps    : %s", strings.Join(gaps, ", "))
+	for _, u := range _strList(rm["unknowns"]) {
+		fmt.Fprintf(b, "\n   unknown : %s", u)
+	}
+	return true
+}
+
 func writeAuthnModel(b *strings.Builder, h map[string]any) bool {
 	am := _asMap(h["authn_model"])
 	if len(am) == 0 {
@@ -600,7 +618,8 @@ func matrixIntentPrelude(intent *db.Node) string {
 		h := c.Hints
 		hasModel := writeAuthzModel(&b, h)
 		hasAuthn := writeAuthnModel(&b, h)
-		hasModel = hasModel || hasAuthn
+		hasRepo := writeRepoModel(&b, h)
+		hasModel = hasModel || hasAuthn || hasRepo
 		anyAuthzModel = anyAuthzModel || hasModel
 		flow := _asList(h["flow"])
 		guardRe := regexp.MustCompile(`(?i)checkOwner|checkPermission|verifyOwner|assertOwner|hasRole|hasPermission|isOwner|checkAuth`)

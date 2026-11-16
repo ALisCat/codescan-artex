@@ -20,9 +20,18 @@ VULN_CN = {
     "file-upload": "文件上传", "path-traversal": "路径穿越", "sql-injection": "SQL 注入",
     "command-exec": "命令/表达式注入", "ssrf": "SSRF", "deserialization": "不安全反序列化",
     "xss": "XSS", "authz": "越权", "authn": "认证/回调",
+    "business_logic": "业务逻辑", "xxe": "XXE", "csrf": "CSRF",
+    "open_redirect": "开放重定向", "ssti": "SSTI", "ldap_injection": "LDAP 注入",
+    "mass_assignment": "批量赋值", "race_condition": "竞态条件",
+    "secrets": "硬编码凭据", "crypto": "弱加密", "dependency": "依赖漏洞",
+    "sensitive_data": "敏感数据暴露",
 }
-VULN_BASE = {"command-exec": 9, "deserialization": 9, "authn": 14, "file-upload": 8,
-             "sql-injection": 7, "path-traversal": 7, "ssrf": 6, "authz": 6, "xss": 3}
+REPO_VULNS = {"secrets", "crypto", "dependency", "sensitive_data"}
+VULN_BASE = {"command-exec": 9, "deserialization": 9, "authn": 14, "business_logic": 12,
+             "file-upload": 8, "sql-injection": 7, "path-traversal": 7, "xxe": 8,
+             "csrf": 5, "open_redirect": 4, "ssti": 8, "ldap_injection": 7,
+             "mass_assignment": 6, "race_condition": 6, "secrets": 14, "crypto": 12,
+             "dependency": 10, "sensitive_data": 8, "ssrf": 6, "authz": 6, "xss": 3}
 
 
 def _load_cellgen():
@@ -40,6 +49,20 @@ CHECKLISTS["authn"] = [
     "回调/登录/密码重置是否允许匿名调用",
     "校验逻辑是否真的在请求路径上执行（拦截器/注解/切面是否注册）",
 ]
+CHECKLISTS.update({
+    "business_logic": ["请求体是否携带金额/状态/租户/订单标识", "服务端是否重新计算金额和状态", "订单/预约是否绑定 principal", "是否有幂等/重放/状态机保护"],
+    "xxe": ["XML parser 是否关闭 DOCTYPE/外部实体", "是否设置 ACCESS_EXTERNAL_DTD/SCHEMA", "请求体是否可控"],
+    "csrf": ["是否使用 Cookie/Session 认证", "状态变更接口是否校验 CSRF token", "SameSite/Origin 校验"],
+    "open_redirect": ["重定向目标是否来自请求参数", "是否只允许相对路径/白名单域名"],
+    "ssti": ["模板/表达式引擎是否处理请求数据", "是否使用 Sandbox/SimpleEvaluationContext/白名单"],
+    "ldap_injection": ["LDAP filter 是否拼接请求输入", "是否使用 LdapEncoder/escapeFilter"],
+    "mass_assignment": ["请求体是否直接绑定实体/含 role/tenant/status 等敏感字段", "是否有 DTO/JsonIgnore/只读字段"],
+    "race_condition": ["库存/号源/挂号/支付是否有锁或幂等", "是否 @Transactional/for update/RLock", "是否 check-then-act"],
+    "secrets": ["是否有硬编码 JWT/DB/Redis/API Key", "是否使用环境变量/密钥管理", "是否把密钥提交进仓库"],
+    "crypto": ["是否使用 AES/ECB/MD5/SHA1", "密钥是否硬编码", "是否使用 KMS/KeyStore/GCM"],
+    "dependency": ["是否使用已知 CVE 版本", "是否有依赖锁定/升级计划", "是否可达"],
+    "sensitive_data": ["日志/响应是否包含身份证/手机号/姓名", "是否脱敏/加密", "是否返回给前端"],
+})
 
 
 def _site_depth(endpoint, site):
@@ -157,6 +180,17 @@ def _render_task(task):
             lines.append("            patterns=" + " | ".join(sp["search_patterns"]))
         for u in an.get("unknowns", [])[:5]:
             lines.append("  unknown : " + u)
+    rm = h.get("repo_model")
+    if rm:
+        lines.append("【仓库级模型】")
+        lines.append("  required: %s" % ", ".join(rm.get("required") or []))
+        lines.append("  gaps    : %s" % (", ".join(rm.get("gaps") or []) or "none"))
+        sp = rm.get("search_policy") or {}
+        lines.append("  search  : allow=%s budget=%s kinds=%s" % (
+            sp.get("allow_global_search"), sp.get("search_budget"),
+            ",".join(sp.get("search_kinds") or []) or "-"))
+        for u in rm.get("unknowns", [])[:5]:
+            lines.append("  unknown : " + u)
     gh = h.get("guard_helpers") or []
     if gh:
         lines.append("  guard_helpers:")
@@ -164,7 +198,7 @@ def _render_task(task):
             lines.append("    - %s %s @ %s:%s (resolved=%s)" % (
                 g.get("kind"), g.get("method"), g.get("target_file") or g.get("call_file"),
                 g.get("target_line") or g.get("call_line"), g.get("resolved")))
-    if not am and not an:
+    if not am and not an and not rm:
         lines.append("【守卫线索（仅供判断，不代表安全）】")
         for g in h.get("guards_seen", [])[:8]:
             lines.append("  - %s @ %s:%s" % (g.get("text") or g.get("kind"), g.get("file"), g.get("line")))
@@ -188,14 +222,19 @@ def main():
 
     graph = json.load(open(args.graph, encoding="utf-8"))
     findings = json.load(open(args.findings, encoding="utf-8"))["findings"]
+    repo_findings = [f for f in findings if (f.get("evidence") or {}).get("scope") == "repo"]
     by_key = {}
     for f in findings:
+        if (f.get("evidence") or {}).get("scope") == "repo":
+            continue
         by_key[(f["method"], f["url"], f["vulnclass"])] = f
 
     endpoints = graph.get("endpoints", [])
     cells, tasks = [], []
     for ep in endpoints:
         for vuln in VULN_CN:
+            if vuln in REPO_VULNS:
+                continue
             f = by_key.get((ep["method"], ep["url"], vuln))
             if not f:
                 state, evidence, guards, missing = UNKNOWN, {}, [], "analyzer not run"
@@ -294,6 +333,51 @@ def main():
                     "trace": evidence.get("sites", [])[:5],
                 })
             cells.append(entry)
+
+    # 仓库级 finding：合成 REPO 端点，不绑定具体接口。
+    for f in repo_findings:
+        if f.get("state") != POSSIBLE:
+            continue
+        vuln = f["vulnclass"]
+        ev = f.get("evidence") or {}
+        sites = ev.get("sites") or []
+        first = sites[0] if sites else {}
+        ep = {
+            "id": "REPO " + vuln, "method": "REPO", "url": f.get("url") or ("repo://" + vuln),
+            "handler": "repo", "file": first.get("file"), "line": first.get("line") or 1,
+            "params": [], "flow": [],
+        }
+        entry = {
+            "endpoint": {
+                "asset_id": 0, "method": "REPO", "url": ep["url"],
+                "permission": "", "handler": "repo",
+                "file": ep.get("file"), "line": ep.get("line"), "params": [],
+            },
+            "vulnclass": vuln, "state": f["state"], "eligibility": "applicable",
+            "signals": [], "variant": "repo", "sinks": sites, "guards": [],
+        }
+        p = _priority(ep, f)
+        entry.update({"priority": p, "bucket": _bucket(p, f["state"])})
+        task = {
+            "task_id": _task_id(ep, vuln), "asset_ids": [],
+            "direction": "审计仓库级「%s」风险（源码/配置）" % VULN_CN.get(vuln, vuln),
+            "vulnclass": vuln, "endpoint": entry["endpoint"],
+            "checklist": CHECKLISTS.get(vuln, []),
+            "hints": {
+                "state": f["state"], "flow": [], "sites": sites, "sinks": sites,
+                "repo_model": ev.get("repo_model"), "scope": "repo",
+                "subtype": ev.get("subtype"), "cwe": ev.get("cwe") or [],
+                "tags": ev.get("tags") or [],
+                "search_policy": (ev.get("repo_model") or {}).get("search_policy"),
+                "params": [], "analyzer": "structural-v2",
+            },
+            "hints_note": "仓库级风险：只根据源码/配置线索，不代表漏洞成立；请核对实际使用与暴露面。",
+            "priority": p, "bucket": _bucket(p, f["state"]),
+            "role": "secondary", "related_tasks": [],
+        }
+        task["prompt"] = _render_task(task)
+        tasks.append(task)
+        cells.append(entry)
 
     # primary/secondary per endpoint
     by_ep = {}
