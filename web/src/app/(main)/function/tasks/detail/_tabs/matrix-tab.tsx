@@ -4,7 +4,7 @@
 //
 // 目标（v3）：
 //   1. 单元格直接写人话：会派 / 已派 / 守卫 / 未验 / 漏洞 / 通过 / 待定
-//   2. 点接口名 → 右侧抽屉看该接口全部 8 类：哪些会派、哪些有守卫、原因是什么
+//   2. 点接口名 → 右侧抽屉看该接口全部类型：哪些会派、哪些有守卫、原因是什么
 //   3. 点格子 → 右侧抽屉看该格详情，不用滚到页面底部
 //   4. 长矩阵窗口化渲染（固定行高 + 可视区切片），1000+ 行不卡
 //   5. 筛选：会派发 / 有守卫 / 已确认 / 未验证 / 有结论
@@ -37,7 +37,9 @@ import {
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
-const VULNS: { key: string; label: string }[] = [
+type VulnDef = { key: string; label: string };
+
+const VULNS: VulnDef[] = [
   { key: "authz", label: "越权" },
   { key: "sql-injection", label: "SQLi" },
   { key: "command-exec", label: "命令/表达式" },
@@ -47,6 +49,16 @@ const VULNS: { key: string; label: string }[] = [
   { key: "path-traversal", label: "路径穿越" },
   { key: "xss", label: "XSS" },
 ];
+
+// 已知类型用中文短名；后续新增类型即使前端还没登记，也先按 key 展示，避免丢列。
+function mergeVulns(keys: string[]): VulnDef[] {
+  const out = new Map<string, VulnDef>();
+  for (const v of VULNS) out.set(v.key, v);
+  for (const k of keys) {
+    if (!out.has(k)) out.set(k, { key: k, label: k });
+  }
+  return [...out.values()];
+}
 
 type StatusMeta = { label: string; short: string; cell: string; dot: string; hint: string };
 
@@ -162,7 +174,6 @@ const FILTERS: { key: FilterKind; label: string }[] = [
 
 const ROW_H = 34;
 const OVERSCAN = 8;
-const GRID = "minmax(230px, 2.2fr) repeat(8, minmax(58px, 1fr)) minmax(112px, 0.9fr)";
 
 function rowMatches(r: RowData, kind: FilterKind): boolean {
   const has = (s: string) => (r.counts[s] ?? 0) > 0;
@@ -245,6 +256,7 @@ export function MatrixTab({ taskId }: { taskId: string }) {
   const [view, setView] = React.useState<"endpoint" | "prefix">("endpoint");
   const [kind, setKind] = React.useState<FilterKind>("all");
   const [showNaRows, setShowNaRows] = React.useState(false);
+  const [showAllVulns, setShowAllVulns] = React.useState(false);
 
   const [cellSel, setCellSel] = React.useState<CaCell | null>(null);
   const [endpointKey, setEndpointKey] = React.useState<string | null>(null);
@@ -322,6 +334,35 @@ export function MatrixTab({ taskId }: { taskId: string }) {
     return rs;
   }, [allRows, q, kind, showNaRows]);
 
+  const allVulns = React.useMemo(
+    () => mergeVulns(cells.map((c) => c.vulnclass)),
+    [cells],
+  );
+
+  // 表格默认只给“有分析结果”的类型留列：
+  // possible/pending/dispatched/confirmed/clean/needs_more/hold 都算；
+  // na（结构上不可能）和 unverified（未验证）默认收进右侧抽屉。
+  const visibleVulns = React.useMemo(() => {
+    if (showAllVulns || cells.length === 0) return allVulns;
+    const keep = new Set(
+      cells
+        .filter((c) => c.status !== "na" && c.status !== "unverified")
+        .map((c) => c.vulnclass),
+    );
+    return allVulns.filter((v) => keep.has(v.key));
+  }, [allVulns, cells, showAllVulns]);
+  const hiddenVulnCount = allVulns.length - visibleVulns.length;
+  const tableVulns = React.useMemo(
+    () => (visibleVulns.length > 0 ? visibleVulns : [{ key: "__none__", label: "—" }]),
+    [visibleVulns],
+  );
+  const gridTemplate = React.useMemo(
+    () =>
+      `minmax(230px, 2.2fr) repeat(${tableVulns.length}, minmax(58px, 1fr)) minmax(112px, 0.9fr)`,
+    [tableVulns.length],
+  );
+  const gridMinWidth = Math.max(900, 360 + tableVulns.length * 64);
+
   // 前缀聚合
   const grouped = React.useMemo(() => {
     if (view !== "prefix") return null;
@@ -330,7 +371,7 @@ export function MatrixTab({ taskId }: { taskId: string }) {
       const p = prefixOf(r.url);
       if (!m.has(p)) m.set(p, new Map());
       const g = m.get(p)!;
-      for (const v of VULNS) {
+      for (const v of tableVulns) {
         const c = r.cells.get(v.key);
         if (!c || c.status === "na") continue;
         const cur = g.get(v.key);
@@ -342,7 +383,7 @@ export function MatrixTab({ taskId }: { taskId: string }) {
       }
     }
     return m;
-  }, [view, rows]);
+  }, [view, rows, tableVulns]);
 
   React.useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
@@ -385,7 +426,8 @@ export function MatrixTab({ taskId }: { taskId: string }) {
                 <b>会派</b>=结构可达且无已知守卫，已进入 worker 队列；
                 <b>守卫</b>=有归属/参数化/路径校验，保留可见但不派；
                 <b>未验</b>=调用链没解析全，无法确认。
-                点<b>接口名</b>看该接口全部 8 类，点<b>格子</b>看该格详情。
+                点<b>接口名</b>看该接口全部 {allVulns.length} 类，点<b>格子</b>看该格详情。
+                表格默认只显示有分析结果的类型；N/A 和未验证收进接口抽屉。
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
@@ -440,6 +482,18 @@ export function MatrixTab({ taskId }: { taskId: string }) {
               />
               显示全不适用行
             </label>
+            <label className="flex items-center gap-1 text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={showAllVulns}
+                onChange={(e) => setShowAllVulns(e.target.checked)}
+              />
+              显示全部类型
+            </label>
+            <span className="text-muted-foreground">
+              覆盖 {allVulns.length} 类 · 显示 {visibleVulns.length} 类
+              {hiddenVulnCount > 0 ? ` · 隐藏 ${hiddenVulnCount} 类（N/A/未验）` : ""}
+            </span>
             <span className="text-muted-foreground">
               行 {view === "prefix" ? grouped?.size ?? 0 : rows.length}
               {view === "endpoint" && rows.length > visibleRows.length
@@ -452,17 +506,17 @@ export function MatrixTab({ taskId }: { taskId: string }) {
         <CardContent className="p-0">
           {err && <p className="px-4 pt-2 text-xs text-destructive">{err}</p>}
           <div ref={scrollRef} className="max-h-[68vh] min-h-[340px] overflow-auto overscroll-contain border-t">
-            <div style={{ minWidth: 900 }}>
+            <div style={{ minWidth: gridMinWidth }}>
               {/* 表头 */}
               <div
                 className="sticky top-0 z-20 grid h-9 items-center border-b bg-background text-[11px] font-medium"
-                style={{ gridTemplateColumns: GRID }}
+                style={{ gridTemplateColumns: gridTemplate }}
               >
                 <div className="sticky left-0 z-30 flex h-full items-center bg-background px-2">
                   {view === "prefix" ? "前缀" : "接口"}
                 </div>
-                {VULNS.map((v) => (
-                  <div key={v.key} className="truncate px-1 text-center">
+                {tableVulns.map((v) => (
+                  <div key={v.key} className="truncate px-1 text-center" title={v.key}>
                     {v.label}
                   </div>
                 ))}
@@ -476,7 +530,7 @@ export function MatrixTab({ taskId }: { taskId: string }) {
                     <div
                       key={r.key}
                       className="grid items-center border-b border-border/60 hover:bg-muted/30"
-                      style={{ gridTemplateColumns: GRID, height: ROW_H }}
+                      style={{ gridTemplateColumns: gridTemplate, height: ROW_H }}
                     >
                       <button
                         type="button"
@@ -489,7 +543,7 @@ export function MatrixTab({ taskId }: { taskId: string }) {
                         </Badge>
                         <span className="truncate font-mono text-[11px]">{r.url}</span>
                       </button>
-                      {VULNS.map((v) => {
+                      {tableVulns.map((v) => {
                         const c = r.cells.get(v.key);
                         const meta = metaFor(c);
                         return (
@@ -528,7 +582,7 @@ export function MatrixTab({ taskId }: { taskId: string }) {
                     <div
                       key={p}
                       className="grid items-center border-b border-border/60 hover:bg-muted/30"
-                      style={{ gridTemplateColumns: GRID, height: ROW_H }}
+                      style={{ gridTemplateColumns: gridTemplate, height: ROW_H }}
                     >
                       <button
                         type="button"
@@ -541,7 +595,7 @@ export function MatrixTab({ taskId }: { taskId: string }) {
                       >
                         {p}
                       </button>
-                      {VULNS.map((v) => {
+                      {tableVulns.map((v) => {
                         const agg = g.get(v.key);
                         const st = agg?.worst ?? "na";
                         const meta = STATUS_META[st] ?? STATUS_META.na;
@@ -583,6 +637,7 @@ export function MatrixTab({ taskId }: { taskId: string }) {
 
       <EndpointSheet
         row={endpointRow}
+        vulns={allVulns}
         onClose={() => setEndpointKey(null)}
         taskId={taskId}
         onAudited={reload}
@@ -625,11 +680,13 @@ function RowSummary({ r, onClick }: { r: RowData; onClick: () => void }) {
 
 function EndpointSheet({
   row,
+  vulns,
   onClose,
   taskId,
   onAudited,
 }: {
   row: RowData | null;
+  vulns: VulnDef[];
   onClose: () => void;
   taskId: string;
   onAudited?: () => void;
@@ -641,7 +698,7 @@ function EndpointSheet({
   const first = row.cells.values().next().value as CaCell | undefined;
   const dispatchN = (row.counts.pending ?? 0) + (row.counts.dispatched ?? 0);
   const byState = (pick: (c: CaCell) => boolean) =>
-    VULNS.filter((v) => {
+    vulns.filter((v) => {
       const c = row.cells.get(v.key);
       return !!c && pick(c);
     }).map((v) => v.label);
@@ -687,9 +744,9 @@ function EndpointSheet({
             </div>
           )}
           <div className="space-y-1.5">
-            <div className="text-[11px] font-medium text-muted-foreground">该接口的 8 类判定</div>
+            <div className="text-[11px] font-medium text-muted-foreground">该接口的 {vulns.length} 类判定</div>
             <div className="overflow-hidden rounded border">
-              {VULNS.map((v) => {
+              {vulns.map((v) => {
                 const c = row.cells.get(v.key);
                 const meta = metaFor(c);
                 return (
@@ -724,7 +781,7 @@ function EndpointSheet({
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <div className="text-[11px] font-medium text-muted-foreground">
-                  {VULNS.find((v) => v.key === active)?.label} · 详情
+                  {vulns.find((v) => v.key === active)?.label} · 详情
                 </div>
                 <button type="button" className="text-[11px] text-muted-foreground hover:text-foreground" onClick={onClose}>
                   关闭
