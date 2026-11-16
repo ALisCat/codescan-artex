@@ -123,6 +123,12 @@ def _render_task(task):
                 (" [target %s:%s]" % (d.get("target_file"), d.get("target_line"))) if d.get("target_file") and d.get("target_file") != d.get("file") else ""))
         lines.append("  required: %s" % ", ".join(am.get("required") or []))
         lines.append("  gaps    : %s" % (", ".join(am.get("gaps") or []) or "none"))
+        sp = am.get("search_policy") or {}
+        lines.append("  search  : allow=%s budget=%s kinds=%s" % (
+            sp.get("allow_global_search"), sp.get("search_budget"),
+            ",".join(sp.get("search_kinds") or []) or "-"))
+        if sp.get("search_patterns"):
+            lines.append("            patterns=" + " | ".join(sp["search_patterns"]))
         for u in am.get("unknowns", [])[:5]:
             lines.append("  unknown : " + u)
     gh = h.get("guard_helpers") or []
@@ -206,6 +212,7 @@ def main():
                         "guards_seen": guards,
                         "authz_model": evidence.get("authz_model") if vuln == "authz" else None,
                         "guard_helpers": evidence.get("guard_helpers") or [],
+                        "search_policy": (evidence.get("authz_model") or {}).get("search_policy") if vuln == "authz" else None,
                         "params": ep.get("params", []),
                         "analyzer": "structural-v2",
                     },
@@ -229,6 +236,7 @@ def main():
                                   "sites": [], "guards_seen": guards,
                                   "authz_model": evidence.get("authz_model") if vuln == "authz" else None,
                                   "guard_helpers": evidence.get("guard_helpers") or [],
+                                  "search_policy": (evidence.get("authz_model") or {}).get("search_policy") if vuln == "authz" else None,
                                   "params": ep.get("params", []), "analyzer": "structural-v2"},
                         "hints_note": "图不完整，可能藏着 sink；请先补链路再判断。",
                         "priority": 1, "bucket": "U", "role": "secondary", "related_tasks": [],

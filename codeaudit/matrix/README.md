@@ -122,6 +122,19 @@ principal 来源 + resource/role 参与条件 + 拒绝路径
 `required` 是结构推导（资源 id → ownership；租户参数/插件 → tenant；admin/report 路径或策略声明 → role；资源访问 → authentication）。
 `gaps = required - observed`，只作为 worker 的线索，不是最终结论。
 
+`search_policy` 控制 worker 的全局搜索预算：
+
+```json
+{"allow_global_search": true, "search_budget": 2,
+ "search_kinds": ["ownership"],
+ "search_patterns": ["owner|patientId|userId|checkOwner|ensureAccess"]}
+```
+
+- required 中已命中的 kind 不再搜索；
+- 缺失 kind 允许 Glob/Grep 合计 2 次定向搜索；
+- `allow_global_search=false` 时移除 Glob/Grep；
+- authz_model 格移除 LS/Write/Edit，禁止写笔记。
+
 ## 验收
 
 - demo-v2：5 个种下 authz 漏洞全部出现在 `gaps`，6 个 safe 接口无 gap；

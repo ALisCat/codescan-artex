@@ -1970,3 +1970,43 @@ fixture `/tmp/opencode/authz-fixture`：
 - 布尔 helper 只在调用方有拒绝路径时扫描，避免把普通查询方法误判为守卫；
 - 全量指标：java-sec-code 28 possible / saas 33 possible，authentication gap 偏多
   （这些工程没有全局认证拦截器，属于结构提示，不是最终结论）。
+
+### 34.7 P0 v2：条件化全局搜索预算
+
+初版 P0 想直接禁止 authz 格全局搜索，实测过严：worker 即使已在 flow 里看到
+AuthInterceptor/WebConfig，仍会用 Glob/Grep 找“是否还有别的 ownership 守卫”，
+3 个 authz 格全部 25~33 tools、93k~178k output，并在 15 轮耗尽。
+
+改为按 required 类型门控：
+
+- `required` 中已命中的 kind → 该 kind 不再全局搜索；
+- 缺失的 kind → 允许定向搜索，但 Glob/Grep 合计最多 `search_budget=2` 次；
+- `search_patterns` 只给该 kind 的守卫关键词；
+- 命中或预算用完即提交 verdict；
+- `authz_model` 存在时移除 `LS/Write/Edit`，禁止写笔记；
+- 修复 false unknown：policy 已提供 authentication 时，不再报“未发现 principal”。
+
+`authz_model.search_policy` 示例：
+
+```json
+{
+  "allow_global_search": true,
+  "search_budget": 2,
+  "search_kinds": ["ownership"],
+  "search_patterns": ["owner|patientId|userId|checkOwner|ensureAccess|belong|canAccess"]
+}
+```
+
+A/B（同一份 fresh-clinic demo，3 个 authz 格）：
+
+| 指标 | P0 前（task 14） | P0 v2（task 15） |
+|---|---|---|
+| 结论 | 3/3 confirmed | 3/3 confirmed |
+| 意图状态 | 3/3 exhausted | 3/3 done |
+| 工具数 | 33 / 25 / 27 | 19 / 14 / 15 |
+| Glob+Grep | 15 / 7 / 9 | 3 / 2 / 2（含 1 次被预算拦截） |
+| Write/LS/Edit | 有 | 0 |
+| output tokens | 178k / 157k / 93k | 120k / 99k / 79k |
+
+结论：搜索预算和工具门控有效，但 output token 仍偏高（单格 79k~120k），
+下一步需要单独处理模型每轮的长输出/长思考，而不是继续加搜索限制。

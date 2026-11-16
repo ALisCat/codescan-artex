@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Autumn-27/artex/db"
@@ -179,6 +180,80 @@ func defaultToolsExcept(exclude ...string) []actool.CoreTool {
 	out := make([]actool.CoreTool, 0, len(all))
 	for _, t := range all {
 		if !drop[t.Name()] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// matrixAuthzSearchPolicy 读取 authz 格的搜索预算。
+// 返回 authz 是否为 authz_model 意图、是否允许全局搜索、Glob/Grep 合计预算。
+func matrixAuthzSearchPolicy(intent *db.Node) (authz bool, allow bool, budget int) {
+	if intent == nil {
+		return false, false, 0
+	}
+	var p struct {
+		Cases []struct {
+			Hints map[string]any `json:"hints"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(intent.Payload, &p); err != nil || len(p.Cases) == 0 {
+		return false, false, 0
+	}
+	h := p.Cases[0].Hints
+	if len(_asMap(h["authz_model"])) == 0 {
+		return false, false, 0
+	}
+	sp := _asMap(h["search_policy"])
+	if len(sp) == 0 {
+		// 兼容没有 search_policy 的旧 authz hints：保留有限的搜索能力。
+		return true, true, 2
+	}
+	allow = true
+	if v, ok := sp["allow_global_search"].(bool); ok {
+		allow = v
+	}
+	budget = 2
+	if v, ok := sp["search_budget"].(float64); ok && int(v) > 0 {
+		budget = int(v)
+	}
+	return true, allow, budget
+}
+
+// searchBudgetTool 给 Glob/Grep 套一个合计预算；耗尽后返回错误而不是继续搜索。
+type searchBudgetTool struct {
+	actool.CoreTool
+	remaining *int32
+}
+
+func (t *searchBudgetTool) Call(ctx context.Context, in json.RawMessage, tc *actool.ToolContext) (actool.Result, error) {
+	if atomic.AddInt32(t.remaining, -1) < 0 {
+		return actool.Errorf("矩阵 authz 搜索预算已用完。请停止 Glob/Grep，立即根据 flow/authz_model/guard_helpers 提交 submit_cell_verdict。"), nil
+	}
+	return t.CoreTool.Call(ctx, in, tc)
+}
+
+// gateMatrixSearchTools 对 authz_model 意图收紧工具：
+//   - 禁止 LS/Write/Edit（不写笔记、不做无关浏览）；
+//   - allow=false 时移除 Glob/Grep；
+//   - allow=true 时 Glob/Grep 共享 search_budget 次调用。
+func gateMatrixSearchTools(tools []actool.CoreTool, intent *db.Node) []actool.CoreTool {
+	authz, allow, budget := matrixAuthzSearchPolicy(intent)
+	if !authz {
+		return tools
+	}
+	var remaining int32 = int32(budget)
+	out := make([]actool.CoreTool, 0, len(tools))
+	for _, t := range tools {
+		switch t.Name() {
+		case "LS", "Write", "Edit", "MultiEdit", "NotebookEdit":
+			continue
+		case "Glob", "Grep":
+			if !allow {
+				continue
+			}
+			out = append(out, &searchBudgetTool{CoreTool: t, remaining: &remaining})
+		default:
 			out = append(out, t)
 		}
 	}
@@ -421,6 +496,15 @@ func writeAuthzModel(b *strings.Builder, h map[string]any) bool {
 		gaps = []string{"none"}
 	}
 	fmt.Fprintf(b, "\n   gaps    : %s", strings.Join(gaps, ", "))
+	sp := _asMap(am["search_policy"])
+	if len(sp) > 0 {
+		fmt.Fprintf(b, "\n   search  : allow=%v budget=%v kinds=%s",
+			sp["allow_global_search"], sp["search_budget"],
+			strings.Join(_strList(sp["search_kinds"]), ", "))
+		if pats := _strList(sp["search_patterns"]); len(pats) > 0 {
+			fmt.Fprintf(b, "\n            patterns: %s", strings.Join(pats, " | "))
+		}
+	}
 	for _, u := range _strList(am["unknowns"]) {
 		fmt.Fprintf(b, "\n   unknown : %s", u)
 	}
@@ -462,6 +546,7 @@ func matrixIntentPrelude(intent *db.Node) string {
 		return ""
 	}
 	var b strings.Builder
+	anyAuthzModel := false
 	b.WriteString("\n\n【审计路径（先按这个核对；路径完整就停，不要全仓探索）】")
 	if p.Summary != "" {
 		b.WriteString("\n意图：" + p.Summary)
@@ -470,6 +555,7 @@ func matrixIntentPrelude(intent *db.Node) string {
 		fmt.Fprintf(&b, "\n格子 %s（%s）", c.CellKey, c.VulnClass)
 		h := c.Hints
 		hasModel := writeAuthzModel(&b, h)
+		anyAuthzModel = anyAuthzModel || hasModel
 		flow := _asList(h["flow"])
 		guardRe := regexp.MustCompile(`(?i)checkOwner|checkPermission|verifyOwner|assertOwner|hasRole|hasPermission|isOwner|checkAuth`)
 		printed := 0
@@ -515,7 +601,13 @@ func matrixIntentPrelude(intent *db.Node) string {
 			}
 		}
 	}
-	b.WriteString("\n【硬约束】只读上面列出的文件；不要读其他 controller/service、测试、标注或 GROUND-TRUTH 文件。例外：guard_helpers 里 resolved=false 的候选实现、或 flow 中未展开的守卫调用，允许读该守卫函数。找到 sink + 守卫证据即提交，不要继续探索。")
+	if anyAuthzModel {
+		b.WriteString("\n【硬约束】只读 flow、authz_model、guard_helpers 中列出的文件；禁止 LS/Write/Edit。")
+		b.WriteString("\n搜索策略：search.allow=false 时禁止 Glob/Grep；allow=true 时只允许 Glob/Grep 合计 search.budget 次，且只搜 search.kinds/search.patterns 覆盖的守卫类型。")
+		b.WriteString("\n禁止查 pom、无关 Controller/Service、测试、标注、GROUND-TRUTH，也不要创建笔记文件。预算用完或 gaps 已确认后必须立刻 submit_cell_verdict。")
+	} else {
+		b.WriteString("\n【硬约束】只读上面列出的文件；不要读其他 controller/service、测试、标注或 GROUND-TRUTH 文件。例外：guard_helpers 里 resolved=false 的候选实现、或 flow 中未展开的守卫调用，允许读该守卫函数。找到 sink + 守卫证据即提交，不要继续探索。")
+	}
 	return b.String()
 }
 
@@ -669,6 +761,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// 代码审计全靠 Grep/Glob 定位入口与危险函数，缺了检索能力就只能整文件乱读；
 	// 出网/命令执行类工具已由 CodeAuditTools + stripCodeAuditDeniedTools 全局剔除。
 	base = append(base, defaultToolsExcept()...)
+	base = gateMatrixSearchTools(base, intent)
 	ctx = WithRunInfo(ctx, RunInfo{TaskID: taskID, ExplorationID: explorationID(ts), IntentID: intent.ID})
 	tools, def, cleanup := AugmentTools(ctx, "worker", base)
 	defer cleanup()

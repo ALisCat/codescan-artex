@@ -27,6 +27,13 @@ IGNORE_METHODS = {
     "isNotEmpty", "contains", "size", "length", "add", "put", "get", "stream",
 }
 
+SEARCH_PATTERNS = {
+    "ownership": ["owner|patientId|userId|checkOwner|ensureAccess|belong|canAccess"],
+    "tenant": ["tenant|tenantId|hospId|orgId|deptId"],
+    "role": ["@PreAuthorize|@Secured|@RolesAllowed|@RequiresRoles|@SaCheckRole|hasRole|hasAuthority"],
+    "authentication": ["HandlerInterceptor|WebMvcConfigurer|SecurityFilterChain|OncePerRequestFilter|token|401"],
+}
+
 
 def _dedup(items, keys):
     seen, out = set(), []
@@ -184,6 +191,8 @@ def build_authz_model(endpoint, ctx, resources, guards_seen=None):
 
         # 条件里的 helper 调用：解析到实现后，用返回值/方法体判断
         for gc in facts.get("guard_calls", []):
+            if ACCESSOR.match(gc["name"]) or gc["name"] in IGNORE_METHODS:
+                continue
             target = None
             for c in ctx.calls_in(step):
                 if c.get("name") == gc["name"] and abs((c.get("line") or 0) - gc["line"]) <= 3:
@@ -271,28 +280,37 @@ def build_authz_model(endpoint, ctx, resources, guards_seen=None):
     if "role" in policy_required or ADMIN_PATH.search(endpoint.get("url") or ""):
         required.append("role")
 
+    # 注解 candidate 不抵 required
+    effective = [d for d in decisions if d.get("source") != "annotation-candidate"]
     observed = []
-    for d in decisions:
+    for d in effective:
         k = d.get("kind")
         if k and k not in observed:
             observed.append(k)
-
     gaps = [k for k in required if k not in observed]
+
     unknowns = list(policy_dead)
-    if not principals and (resource or resources):
+    has_authentication = "authentication" in observed
+    if not principals and (resource or resources) and not has_authentication:
         unknowns.append("未发现 principal 来源（可能是全局拦截器，需确认）")
     unresolved = _unresolved_helpers(ctx, endpoint, principals, res_facts)
     for u in unresolved + unresolved_calls:
         unknowns.append("未解析的守卫候选: %s @ %s:%s" % (
             u.get("method"), u.get("call_file"), u.get("call_line")))
 
-    # 注解 candidate 不抵 required
-    effective = []
-    for d in decisions:
-        if d.get("source") == "annotation-candidate":
-            continue
-        effective.append(d)
-    gaps = [k for k in required if k not in {d.get("kind") for d in effective}]
+    # 全局搜索预算：只为 required 中未命中的类型开放；命中后不再扩大搜索。
+    search_kinds = list(gaps)
+    if not search_kinds and any(u.startswith("未解析") for u in unknowns):
+        search_kinds = list(required)
+    search_patterns = []
+    for k in search_kinds:
+        search_patterns.extend(SEARCH_PATTERNS.get(k, []))
+    search_policy = {
+        "allow_global_search": bool(search_kinds),
+        "search_budget": 2,
+        "search_kinds": search_kinds,
+        "search_patterns": list(dict.fromkeys(search_patterns)),
+    }
 
     model = {
         "principal": principals[0] if principals else None,
@@ -302,6 +320,7 @@ def build_authz_model(endpoint, ctx, resources, guards_seen=None):
         "coverage": [k for k in required if k in observed],
         "gaps": gaps,
         "unknowns": unknowns,
+        "search_policy": search_policy,
     }
 
     # guard_helpers：只给需要另读的实现；同文件 inline 已经有行号
