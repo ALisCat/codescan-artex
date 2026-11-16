@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.clinic.mapper.ClinicMapper">
+
+    <resultMap id="loginUserResult" type="com.example.clinic.model.ClinicModels$LoginUser">
+        <id property="userId" column="user_id"/>
+        <result property="username" column="username"/>
+        <result property="password" column="password"/>
+        <result property="role" column="role"/>
+    </resultMap>
+
+    <resultMap id="patientResult" type="com.example.clinic.model.ClinicModels$Patient">
+        <id property="id" column="id"/>
+        <result property="name" column="name"/>
+        <result property="phone" column="phone"/>
+        <result property="email" column="email"/>
+        <result property="gender" column="gender"/>
+        <result property="birthDate" column="birth_date"/>
+    </resultMap>
+
+    <resultMap id="attachmentResult" type="com.example.clinic.model.ClinicModels$Attachment">
+        <id property="id" column="id"/>
+        <result property="appointmentId" column="appointment_id"/>
+        <result property="fileName" column="file_name"/>
+        <result property="storedName" column="stored_name"/>
+        <result property="contentType" column="content_type"/>
+        <result property="fileSize" column="file_size"/>
+        <result property="filePath" column="file_path"/>
+    </resultMap>
+
+    <resultMap id="configResult" type="com.example.clinic.model.ClinicModels$SysConfig">
+        <result property="configKey" column="config_key"/>
+        <result property="configValue" column="config_value"/>
+        <result property="description" column="description"/>
+    </resultMap>
+
+    <select id="findLoginUser" resultMap="loginUserResult">
+        SELECT user_id, username, password, role
+        FROM clinic_user
+        WHERE username = #{username}
+        LIMIT 1
+    </select>
+
+    <select id="findPatientById" resultMap="patientResult">
+        SELECT id, name, phone, email, gender, birth_date
+        FROM clinic_patient
+        WHERE id = #{id}
+    </select>
+
+    <select id="findAttachmentsByAppointmentId" resultMap="attachmentResult">
+        SELECT id, appointment_id, file_name, stored_name, content_type, file_size, file_path
+        FROM clinic_attachment
+        WHERE appointment_id = #{appointmentId}
+        ORDER BY id DESC
+    </select>
+
+    <select id="findAttachmentById" resultMap="attachmentResult">
+        SELECT id, appointment_id, file_name, stored_name, content_type, file_size, file_path
+        FROM clinic_attachment
+        WHERE id = #{id}
+    </select>
+
+    <insert id="insertAttachment" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        INSERT INTO clinic_attachment
+            (appointment_id, file_name, stored_name, content_type, file_size, file_path)
+        VALUES
+            (#{appointmentId}, #{fileName}, #{storedName}, #{contentType}, #{fileSize}, #{filePath})
+    </insert>
+
+    <insert id="insertNotice">
+        INSERT INTO clinic_notice
+            (patient_id, channel, title, content, created_by, created_at)
+        VALUES
+            (#{patientId}, #{channel}, #{title}, #{content}, #{createdBy}, CURRENT_TIMESTAMP)
+    </insert>
+
+    <select id="findConfig" resultMap="configResult">
+        SELECT config_key, config_value, description
+        FROM clinic_config
+        WHERE config_key = #{configKey}
+    </select>
+
+    <update id="upsertConfig">
+        MERGE INTO clinic_config (config_key, config_value, description)
+        KEY (config_key)
+        VALUES (#{configKey}, #{configValue}, #{description})
+    </update>
+</mapper>

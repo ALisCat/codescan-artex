@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.clinic.mapper.AppointmentMapper">
+
+    <resultMap id="appointmentResult" type="com.example.clinic.model.ClinicModels$Appointment">
+        <id property="id" column="id"/>
+        <result property="patientId" column="patient_id"/>
+        <result property="patientName" column="patient_name"/>
+        <result property="appointmentDate" column="appointment_date"/>
+        <result property="department" column="department"/>
+        <result property="doctor" column="doctor"/>
+        <result property="status" column="status"/>
+        <result property="reason" column="reason"/>
+    </resultMap>
+
+    <select id="findById" resultMap="appointmentResult">
+        SELECT a.id,
+               a.patient_id,
+               p.name AS patient_name,
+               a.appointment_date,
+               a.department,
+               a.doctor,
+               a.status,
+               a.reason
+        FROM clinic_appointment a
+        LEFT JOIN clinic_patient p ON p.id = a.patient_id
+        WHERE a.id = #{id}
+    </select>
+
+    <select id="findList" resultMap="appointmentResult">
+        SELECT a.id,
+               a.patient_id,
+               p.name AS patient_name,
+               a.appointment_date,
+               a.department,
+               a.doctor,
+               a.status,
+               a.reason
+        FROM clinic_appointment a
+        LEFT JOIN clinic_patient p ON p.id = a.patient_id
+        <where>
+            <if test="patientId != null">
+                a.patient_id = #{patientId}
+            </if>
+            <if test="status != null and status != ''">
+                AND a.status = #{status}
+            </if>
+            <if test="doctor != null and doctor != ''">
+                AND a.doctor = #{doctor}
+            </if>
+        </where>
+        ORDER BY a.appointment_date DESC
+    </select>
+
+    <update id="cancel">
+        UPDATE clinic_appointment
+        SET status = 'CANCELLED',
+            reason = #{reason}
+        WHERE id = #{id}
+    </update>
+
+    <update id="reschedule">
+        UPDATE clinic_appointment
+        <set>
+            appointment_date = #{appointmentDate},
+            status = 'RESCHEDULED',
+            <if test="doctor != null and doctor != ''">
+                doctor = #{doctor},
+            </if>
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <select id="findForReport" resultMap="appointmentResult">
+        SELECT a.id,
+               a.patient_id,
+               p.name AS patient_name,
+               a.appointment_date,
+               a.department,
+               a.doctor,
+               a.status,
+               a.reason
+        FROM clinic_appointment a
+        LEFT JOIN clinic_patient p ON p.id = a.patient_id
+        ORDER BY ${orderBy} ${direction}
+    </select>
+</mapper>
