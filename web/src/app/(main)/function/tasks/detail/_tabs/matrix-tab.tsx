@@ -161,7 +161,65 @@ type RowData = {
   weight: number;
 };
 
+function summaryStatus(r: RowData): { key: string; label: string; cls: string } {
+  if ((r.counts.confirmed ?? 0) > 0) {
+    return { key: "confirmed", label: "已确认", cls: "border-red-500/50 bg-red-500/10 text-red-700 dark:text-red-300" };
+  }
+  if ((r.counts.needs_more ?? 0) > 0) {
+    return { key: "needs_more", label: "待补充", cls: "border-violet-500/50 bg-violet-500/10 text-violet-700 dark:text-violet-300" };
+  }
+  if ((r.counts.pending ?? 0) + (r.counts.dispatched ?? 0) > 0) {
+    return { key: "pending", label: "待审", cls: "border-blue-500/50 bg-blue-500/10 text-blue-700 dark:text-blue-300" };
+  }
+  if ((r.counts.clean ?? 0) > 0) {
+    return { key: "clean", label: "已排除", cls: "border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" };
+  }
+  if ((r.counts.unverified ?? 0) > 0) {
+    return { key: "unverified", label: "未验证", cls: "border-slate-400/50 bg-slate-500/10 text-slate-600 dark:text-slate-300" };
+  }
+  return { key: "none", label: "—", cls: "border-border text-muted-foreground" };
+}
+
+function summaryText(r: RowData, allVulns: VulnDef[]): string {
+  const labels = (status: string) =>
+    allVulns.filter((v) => r.cells.get(v.key)?.status === status).map((v) => v.label);
+  const confirmed = labels("confirmed");
+  const pending = [...labels("pending"), ...labels("dispatched")];
+  const needs = labels("needs_more");
+  const clean = labels("clean");
+  const unverified = labels("unverified");
+  const fmt = (xs: string[]) => {
+    const head = xs.slice(0, 3).join("、");
+    return xs.length > 3 ? `${head} 等` : head;
+  };
+
+  if (confirmed.length > 0) {
+    let s = `发现 ${confirmed.length} 个：${fmt(confirmed)}`;
+    if (pending.length > 0) s += `；另有 ${pending.length} 类待审`;
+    if (unverified.length > 0) s += `；${unverified.length} 类未验证`;
+    return s;
+  }
+  if (pending.length > 0) {
+    let s = `待审 ${pending.length} 类：${fmt(pending)}`;
+    if (needs.length > 0) s += `；${needs.length} 类待补充`;
+    if (unverified.length > 0) s += `；${unverified.length} 类未验证`;
+    return s;
+  }
+  if (needs.length > 0) return `待补充 ${needs.length} 类：${fmt(needs)}`;
+  if (clean.length > 0) return `已排除 ${clean.length} 类，无确认漏洞`;
+  if (unverified.length > 0) return `未验证 ${unverified.length} 类`;
+  return "暂无判定结果";
+}
+
+function summaryBucket(r: RowData): { label: string; cls: string } {
+  if (r.weight <= 0) return { label: "—", cls: "text-muted-foreground" };
+  if (r.weight >= 20) return { label: "P0", cls: "text-red-600 dark:text-red-400" };
+  if (r.weight >= 14) return { label: "P1", cls: "text-amber-600 dark:text-amber-400" };
+  return { label: "P2", cls: "text-slate-600 dark:text-slate-300" };
+}
+
 type FilterKind = "all" | "dispatch" | "hold" | "confirmed" | "unverified" | "done";
+type DisplayMode = "summary" | "matrix";
 
 const FILTERS: { key: FilterKind; label: string }[] = [
   { key: "all", label: "全部（有内容）" },
@@ -173,7 +231,9 @@ const FILTERS: { key: FilterKind; label: string }[] = [
 ];
 
 const ROW_H = 34;
+const SUMMARY_ROW_H = 58;
 const OVERSCAN = 8;
+const SUMMARY_GRID = "minmax(260px, 2.4fr) 72px 96px minmax(300px, 3fr) 72px";
 
 function rowMatches(r: RowData, kind: FilterKind): boolean {
   const has = (s: string) => (r.counts[s] ?? 0) > 0;
@@ -253,6 +313,7 @@ export function MatrixTab({ taskId }: { taskId: string }) {
   const reload = React.useCallback(() => setTick((x) => x + 1), []);
 
   const [q, setQ] = React.useState("");
+  const [displayMode, setDisplayMode] = React.useState<DisplayMode>("summary");
   const [view, setView] = React.useState<"endpoint" | "prefix">("endpoint");
   const [kind, setKind] = React.useState<FilterKind>("all");
   const [showNaRows, setShowNaRows] = React.useState(false);
@@ -387,14 +448,19 @@ export function MatrixTab({ taskId }: { taskId: string }) {
 
   React.useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
-  }, [q, kind, view, showNaRows]);
+  }, [q, kind, view, showNaRows, displayMode]);
 
   const by = stats?.by_status ?? {};
   const dispatchCount = (by.pending ?? 0) + (by.dispatched ?? 0);
   const doneCount = (by.confirmed ?? 0) + (by.clean ?? 0) + (by.needs_more ?? 0);
 
-  const virtual = useVirtualRows(view === "endpoint" ? rows.length : 0, ROW_H, scrollRef);
-  const visibleRows = view === "endpoint" ? rows.slice(virtual.start, virtual.end) : [];
+  const summaryView = displayMode === "summary";
+  const virtual = useVirtualRows(
+    summaryView ? rows.length : view === "endpoint" ? rows.length : 0,
+    summaryView ? SUMMARY_ROW_H : ROW_H,
+    scrollRef,
+  );
+  const visibleRows = summaryView || view === "endpoint" ? rows.slice(virtual.start, virtual.end) : [];
 
   const endpointRow = endpointKey ? rowMap.get(endpointKey) ?? null : null;
 
@@ -416,18 +482,27 @@ export function MatrixTab({ taskId }: { taskId: string }) {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-1">
               <CardTitle className="flex items-center gap-2 text-sm">
-                <BugIcon className="size-4" /> 接口 × 漏洞类型
+                <BugIcon className="size-4" /> {summaryView ? "接口审计摘要" : "接口 × 漏洞类型"}
                 {loading && <Loader2Icon className="size-3.5 animate-spin text-muted-foreground" />}
                 <span className="text-xs font-normal text-muted-foreground">
                   {doneCount > 0 ? `已了结 ${doneCount} 格` : "等待 worker 回填"}
                 </span>
               </CardTitle>
               <p className="max-w-4xl text-[11px] leading-5 text-muted-foreground">
-                <b>会派</b>=结构可达且无已知守卫，已进入 worker 队列；
-                <b>守卫</b>=有归属/参数化/路径校验，保留可见但不派；
-                <b>未验</b>=调用链没解析全，无法确认。
-                点<b>接口名</b>看该接口全部 {allVulns.length} 类，点<b>格子</b>看该格详情。
-                表格默认只显示有分析结果的类型；N/A 和未验证收进接口抽屉。
+                {summaryView ? (
+                  <>
+                    摘要视图：一行一个接口，直接看<b>已确认 / 待审 / 已排除 / 未验证</b>。
+                    点<b>接口名</b>或<b>查看</b>打开右侧抽屉，里面保留该接口全部 {allVulns.length} 类的完整判定。
+                  </>
+                ) : (
+                  <>
+                    <b>会派</b>=结构可达且无已知守卫，已进入 worker 队列；
+                    <b>守卫</b>=有归属/参数化/路径校验，保留可见但不派；
+                    <b>未验</b>=调用链没解析全，无法确认。
+                    点<b>接口名</b>看该接口全部 {allVulns.length} 类，点<b>格子</b>看该格详情。
+                    表格默认只显示有分析结果的类型；N/A 和未验证收进接口抽屉。
+                  </>
+                )}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
@@ -450,19 +525,37 @@ export function MatrixTab({ taskId }: { taskId: string }) {
             <div className="flex rounded border">
               <button
                 type="button"
-                onClick={() => setView("endpoint")}
-                className={cn("px-2 py-1", view === "endpoint" && "bg-primary/10 font-medium text-primary")}
+                onClick={() => setDisplayMode("summary")}
+                className={cn("px-2 py-1", summaryView && "bg-primary/10 font-medium text-primary")}
               >
-                接口级
+                摘要
               </button>
               <button
                 type="button"
-                onClick={() => setView("prefix")}
-                className={cn("px-2 py-1", view === "prefix" && "bg-primary/10 font-medium text-primary")}
+                onClick={() => setDisplayMode("matrix")}
+                className={cn("px-2 py-1", !summaryView && "bg-primary/10 font-medium text-primary")}
               >
-                前缀聚合
+                矩阵
               </button>
             </div>
+            {!summaryView && (
+              <div className="flex rounded border">
+                <button
+                  type="button"
+                  onClick={() => setView("endpoint")}
+                  className={cn("px-2 py-1", view === "endpoint" && "bg-primary/10 font-medium text-primary")}
+                >
+                  接口级
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setView("prefix")}
+                  className={cn("px-2 py-1", view === "prefix" && "bg-primary/10 font-medium text-primary")}
+                >
+                  前缀聚合
+                </button>
+              </div>
+            )}
             <select
               value={kind}
               onChange={(e) => setKind(e.target.value as FilterKind)}
@@ -482,21 +575,25 @@ export function MatrixTab({ taskId }: { taskId: string }) {
               />
               显示全不适用行
             </label>
-            <label className="flex items-center gap-1 text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={showAllVulns}
-                onChange={(e) => setShowAllVulns(e.target.checked)}
-              />
-              显示全部类型
-            </label>
+            {!summaryView && (
+              <label className="flex items-center gap-1 text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={showAllVulns}
+                  onChange={(e) => setShowAllVulns(e.target.checked)}
+                />
+                显示全部类型
+              </label>
+            )}
+            {!summaryView && (
+              <span className="text-muted-foreground">
+                覆盖 {allVulns.length} 类 · 显示 {visibleVulns.length} 类
+                {hiddenVulnCount > 0 ? ` · 隐藏 ${hiddenVulnCount} 类（N/A/未验）` : ""}
+              </span>
+            )}
             <span className="text-muted-foreground">
-              覆盖 {allVulns.length} 类 · 显示 {visibleVulns.length} 类
-              {hiddenVulnCount > 0 ? ` · 隐藏 ${hiddenVulnCount} 类（N/A/未验）` : ""}
-            </span>
-            <span className="text-muted-foreground">
-              行 {view === "prefix" ? grouped?.size ?? 0 : rows.length}
-              {view === "endpoint" && rows.length > visibleRows.length
+              行 {!summaryView && view === "prefix" ? grouped?.size ?? 0 : rows.length}
+              {(summaryView || view === "endpoint") && rows.length > visibleRows.length
                 ? `（已渲染 ${visibleRows.length}）`
                 : ""}
             </span>
@@ -506,7 +603,34 @@ export function MatrixTab({ taskId }: { taskId: string }) {
         <CardContent className="p-0">
           {err && <p className="px-4 pt-2 text-xs text-destructive">{err}</p>}
           <div ref={scrollRef} className="max-h-[68vh] min-h-[340px] overflow-auto overscroll-contain border-t">
-            <div style={{ minWidth: gridMinWidth }}>
+            <div style={{ minWidth: summaryView ? 900 : gridMinWidth }}>
+              {summaryView && (
+                <>
+                  <div
+                    className="sticky top-0 z-20 grid h-9 items-center border-b bg-background px-2 text-[11px] font-medium"
+                    style={{ gridTemplateColumns: SUMMARY_GRID }}
+                  >
+                    <div>接口</div>
+                    <div className="text-center">优先级</div>
+                    <div className="text-center">状态</div>
+                    <div>摘要</div>
+                    <div className="text-center">操作</div>
+                  </div>
+                  <div style={{ height: virtual.start * SUMMARY_ROW_H }} />
+                  {visibleRows.map((r) => (
+                    <SummaryRow
+                      key={r.key}
+                      r={r}
+                      allVulns={allVulns}
+                      onOpen={() => setEndpointKey(r.key)}
+                    />
+                  ))}
+                  <div style={{ height: Math.max(0, rows.length - virtual.end) * SUMMARY_ROW_H }} />
+                </>
+              )}
+
+              {!summaryView && (
+                <>
               {/* 表头 */}
               <div
                 className="sticky top-0 z-20 grid h-9 items-center border-b bg-background text-[11px] font-medium"
@@ -625,6 +749,8 @@ export function MatrixTab({ taskId }: { taskId: string }) {
                     </div>
                   );
                 })}
+                </>
+              )}
             </div>
           </div>
           {rows.length === 0 && !loading && (
@@ -675,6 +801,73 @@ function RowSummary({ r, onClick }: { r: RowData; onClick: () => void }) {
         ))
       )}
     </button>
+  );
+}
+
+function SummaryRow({
+  r,
+  allVulns,
+  onOpen,
+}: {
+  r: RowData;
+  allVulns: VulnDef[];
+  onOpen: () => void;
+}) {
+  const status = summaryStatus(r);
+  const bucket = summaryBucket(r);
+  const pending = (r.counts.pending ?? 0) + (r.counts.dispatched ?? 0);
+  const chips = [
+    { n: r.counts.confirmed ?? 0, label: "漏洞", cls: "text-red-600 dark:text-red-400" },
+    { n: pending, label: "待审", cls: "text-blue-600 dark:text-blue-400" },
+    { n: r.counts.clean ?? 0, label: "通过", cls: "text-emerald-600 dark:text-emerald-400" },
+    { n: r.counts.unverified ?? 0, label: "未验", cls: "text-slate-500 dark:text-slate-400" },
+  ].filter((x) => x.n > 0);
+
+  return (
+    <div
+      className="grid items-center border-b border-border/60 px-2 hover:bg-muted/30"
+      style={{ gridTemplateColumns: SUMMARY_GRID, height: SUMMARY_ROW_H }}
+    >
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex min-w-0 items-center gap-2 text-left"
+        title="查看该接口全部漏洞类型"
+      >
+        <Badge variant="outline" className="shrink-0 px-1 py-0 font-mono text-[9px]">
+          {r.method}
+        </Badge>
+        <span className="truncate font-mono text-[11px]">{r.url}</span>
+      </button>
+      <span className={cn("text-center text-[11px] font-semibold", bucket.cls)}>{bucket.label}</span>
+      <span className="flex justify-center">
+        <span className={cn("rounded border px-1.5 py-0.5 text-[10px] font-medium", status.cls)}>
+          {status.label}
+        </span>
+      </span>
+      <div className="min-w-0">
+        <div className="truncate text-[11px] leading-4" title={summaryText(r, allVulns)}>
+          {summaryText(r, allVulns)}
+        </div>
+        {chips.length > 0 && (
+          <div className="mt-0.5 flex flex-wrap gap-1.5 text-[10px]">
+            {chips.map((x) => (
+              <span key={x.label} className={cn("whitespace-nowrap font-medium", x.cls)}>
+                {x.label}
+                {x.n > 1 ? x.n : ""}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="h-7 rounded border px-2 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+      >
+        查看
+      </button>
+    </div>
   );
 }
 
