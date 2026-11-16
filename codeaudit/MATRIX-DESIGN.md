@@ -2010,3 +2010,55 @@ A/B（同一份 fresh-clinic demo，3 个 authz 格）：
 
 结论：搜索预算和工具门控有效，但 output token 仍偏高（单格 79k~120k），
 下一步需要单独处理模型每轮的长输出/长思考，而不是继续加搜索限制。
+
+## 35. authn v0.1：认证/签名/回调真实性
+
+### 35.1 目标
+
+任务 16 的支付回调 `notifyCallBack` 不是 authz 矩阵发现的，而是 planner 补出来的。
+本阶段把这类问题变成分析器可稳定产出的方向：
+
+```text
+vulnclass: authn
+subtype: callback-no-signature / callback-no-replay-protection / token-verification-missing
+scope: endpoint
+cwe: CWE-306 / CWE-347 / CWE-294
+```
+
+### 35.2 实现
+
+- `matrix/catalogs/authn.yaml`：回调、token、签名、时间戳/nonce、认证主体模式；
+- `matrix/analyzers/authn.py`：
+  - callback 入口要求 `signature` + `replay_protection`；
+  - token/会话入口要求 `authentication`；
+  - 只扫描入口及其认证/回调相关方法，避免把下游出站签名当成入站校验；
+- `bind.py`：新增 `authn` direction/checklist/priority，hints 带 `authn_model`；
+- `worker.go`：`writeAuthnModel` + authn search budget；authn 格同样禁止 `LS/Write/Edit`；
+- 前端 `VULNS` 增加“认证/回调”标签。
+
+### 35.3 验证
+
+saas-git：
+
+```text
+/authz? 35 endpoints
+authn possible: 1
+  /api/reservation/register/notifyCallBack
+  gaps: signature, replay_protection
+```
+
+demo-v1 / demo-v2 / fresh-clinic：
+
+```text
+authn possible: 0
+```
+
+说明当前规则没有把普通接口误报成认证缺口。
+
+### 35.4 待做
+
+- 签名 helper 的 resolved/unresolved 目标；
+- 登录/密码重置/OTP 的 rate-limit 子规则；
+- JWT 硬编码密钥归入 `secrets`，不混在 authn；
+- 支付回调的 business-logic 子类型；
+- 带 HMAC 的 fixture，验证“有签名”时不再报 gap。

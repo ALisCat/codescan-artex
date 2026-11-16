@@ -20,7 +20,7 @@ import (
 var cellVulnCN = map[string]string{
 	"file-upload": "文件上传", "path-traversal": "路径穿越", "sql-injection": "SQL 注入",
 	"command-exec": "命令/表达式注入", "ssrf": "SSRF", "deserialization": "不安全反序列化",
-	"xss": "XSS", "authz": "越权",
+	"xss": "XSS", "authz": "越权", "authn": "认证/回调",
 }
 
 // importCellsBody 是 POST /api/codeaudit/tasks/{id}/import 的请求体。
@@ -81,6 +81,7 @@ var cellChecklistCN = map[string][]string{
 	"deserialization": {"是否对不可信数据做原生反序列化", "有无类白名单 / SafeMode", "依赖是否存在可利用 gadget"},
 	"xss":             {"输出是否转义", "是否写入可渲染位置", "前端渲染方式"},
 	"authz":           {"是否有 principal 介入数据访问", "归属谓词写在哪（SQL / Java / 注解）", "是否把判定委托给外部服务"},
+	"authn":           {"认证主体从哪里来", "签名/HMAC/时间戳/nonce 是否校验", "回调/登录是否允许匿名调用", "校验逻辑是否真的在请求路径上执行"},
 }
 
 // manualAuditBody 是 POST /api/codeaudit/tasks/{id}/cells/audit 的请求体。

@@ -66,3 +66,29 @@ func TestGateMatrixSearchTools(t *testing.T) {
 		}
 	}
 }
+
+func TestMatrixIntentPreludeAuthnModel(t *testing.T) {
+	payload := []byte(`{"cases":[{"cell_key":"/notifyCallBack:authn","vulnclass":"authn","hints":{"authn_model":{"endpoint_kind":"callback","required":["signature","replay_protection"],"decisions":[],"gaps":["signature","replay_protection"],"unknowns":[],"search_policy":{"allow_global_search":true,"search_budget":2,"search_kinds":["signature","replay_protection"],"search_patterns":["checkSign|HMAC","timestamp|nonce"]}}}}]}`)
+	n := &db.Node{Payload: payload}
+	got := matrixIntentPrelude(n)
+	for _, want := range []string{"认证/回调判定模型", "kind    : callback", "gaps    : signature, replay_protection", "search  : allow=true budget=2", "authz_model/authn_model"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in prelude:\n%s", want, got)
+		}
+	}
+}
+
+func TestGateAuthnSearchTools(t *testing.T) {
+	payload := []byte(`{"cases":[{"hints":{"authn_model":{"gaps":[]},"search_policy":{"allow_global_search":false,"search_budget":2}}}]}`)
+	var names []string
+	for _, tool := range gateMatrixSearchTools(CodeAuditTools(), &db.Node{Payload: payload}) {
+		names = append(names, tool.Name())
+	}
+	for _, banned := range []string{"Grep", "Glob", "LS", "Write", "Edit"} {
+		for _, n := range names {
+			if n == banned {
+				t.Fatalf("authn allow=false should remove %s, got %v", banned, names)
+			}
+		}
+	}
+}

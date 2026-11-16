@@ -19,10 +19,10 @@ from .analyzers.base import POSSIBLE, IMPOSSIBLE, UNKNOWN
 VULN_CN = {
     "file-upload": "文件上传", "path-traversal": "路径穿越", "sql-injection": "SQL 注入",
     "command-exec": "命令/表达式注入", "ssrf": "SSRF", "deserialization": "不安全反序列化",
-    "xss": "XSS", "authz": "越权",
+    "xss": "XSS", "authz": "越权", "authn": "认证/回调",
 }
-VULN_BASE = {"command-exec": 9, "deserialization": 9, "file-upload": 8, "sql-injection": 7,
-             "path-traversal": 7, "ssrf": 6, "authz": 6, "xss": 3}
+VULN_BASE = {"command-exec": 9, "deserialization": 9, "authn": 14, "file-upload": 8,
+             "sql-injection": 7, "path-traversal": 7, "ssrf": 6, "authz": 6, "xss": 3}
 
 
 def _load_cellgen():
@@ -33,7 +33,13 @@ def _load_cellgen():
     return mod
 
 
-CHECKLISTS = _load_cellgen().CHECKLIST
+CHECKLISTS = dict(_load_cellgen().CHECKLIST)
+CHECKLISTS["authn"] = [
+    "认证主体从哪里来（token / session / signature / principal）",
+    "签名/HMAC/时间戳/nonce 是否校验，是否有重放保护",
+    "回调/登录/密码重置是否允许匿名调用",
+    "校验逻辑是否真的在请求路径上执行（拦截器/注解/切面是否注册）",
+]
 
 
 def _site_depth(endpoint, site):
@@ -83,6 +89,9 @@ def _task_id(endpoint, vuln):
 
 
 def _direction(endpoint, vuln):
+    if vuln == "authn":
+        return "审计 %s %s 的「%s」风险（结构上存在认证/回调入口）" % (
+            endpoint["method"], endpoint["url"], VULN_CN.get(vuln, vuln))
     return "审计 %s %s 的「%s」风险（结构上存在 sink/资源访问）" % (
         endpoint["method"], endpoint["url"], VULN_CN.get(vuln, vuln))
 
@@ -131,6 +140,23 @@ def _render_task(task):
             lines.append("            patterns=" + " | ".join(sp["search_patterns"]))
         for u in am.get("unknowns", [])[:5]:
             lines.append("  unknown : " + u)
+    an = h.get("authn_model")
+    if an:
+        lines.append("【认证/回调判定模型】")
+        lines.append("  kind    : %s" % (an.get("endpoint_kind") or "-"))
+        for d in an.get("decisions", [])[:10]:
+            lines.append("  - %s: %s @ %s:%s" % (
+                d.get("kind"), d.get("rule"), d.get("file"), d.get("line")))
+        lines.append("  required: %s" % ", ".join(an.get("required") or []))
+        lines.append("  gaps    : %s" % (", ".join(an.get("gaps") or []) or "none"))
+        sp = an.get("search_policy") or {}
+        lines.append("  search  : allow=%s budget=%s kinds=%s" % (
+            sp.get("allow_global_search"), sp.get("search_budget"),
+            ",".join(sp.get("search_kinds") or []) or "-"))
+        if sp.get("search_patterns"):
+            lines.append("            patterns=" + " | ".join(sp["search_patterns"]))
+        for u in an.get("unknowns", [])[:5]:
+            lines.append("  unknown : " + u)
     gh = h.get("guard_helpers") or []
     if gh:
         lines.append("  guard_helpers:")
@@ -138,7 +164,7 @@ def _render_task(task):
             lines.append("    - %s %s @ %s:%s (resolved=%s)" % (
                 g.get("kind"), g.get("method"), g.get("target_file") or g.get("call_file"),
                 g.get("target_line") or g.get("call_line"), g.get("resolved")))
-    if not am:
+    if not am and not an:
         lines.append("【守卫线索（仅供判断，不代表安全）】")
         for g in h.get("guards_seen", [])[:8]:
             lines.append("  - %s @ %s:%s" % (g.get("text") or g.get("kind"), g.get("file"), g.get("line")))
@@ -211,8 +237,17 @@ def main():
                         "sinks": evidence.get("sites") or evidence.get("sql_sites") or evidence.get("resource_accesses") or [],
                         "guards_seen": guards,
                         "authz_model": evidence.get("authz_model") if vuln == "authz" else None,
+                        "authn_model": evidence.get("authn_model") if vuln == "authn" else None,
                         "guard_helpers": evidence.get("guard_helpers") or [],
-                        "search_policy": (evidence.get("authz_model") or {}).get("search_policy") if vuln == "authz" else None,
+                        "subtype": evidence.get("subtype"),
+                        "cwe": evidence.get("cwe") or [],
+                        "tags": evidence.get("tags") or [],
+                        "search_policy": (
+                            (evidence.get("authz_model") or {}).get("search_policy")
+                            if vuln == "authz" else
+                            (evidence.get("authn_model") or {}).get("search_policy")
+                            if vuln == "authn" else None
+                        ),
                         "params": ep.get("params", []),
                         "analyzer": "structural-v2",
                     },
@@ -235,8 +270,17 @@ def main():
                         "hints": {"state": state, "flow": ep.get("flow", [])[:20],
                                   "sites": [], "guards_seen": guards,
                                   "authz_model": evidence.get("authz_model") if vuln == "authz" else None,
+                                  "authn_model": evidence.get("authn_model") if vuln == "authn" else None,
                                   "guard_helpers": evidence.get("guard_helpers") or [],
-                                  "search_policy": (evidence.get("authz_model") or {}).get("search_policy") if vuln == "authz" else None,
+                                  "subtype": evidence.get("subtype"),
+                                  "cwe": evidence.get("cwe") or [],
+                                  "tags": evidence.get("tags") or [],
+                                  "search_policy": (
+                                      (evidence.get("authz_model") or {}).get("search_policy")
+                                      if vuln == "authz" else
+                                      (evidence.get("authn_model") or {}).get("search_policy")
+                                      if vuln == "authn" else None
+                                  ),
                                   "params": ep.get("params", []), "analyzer": "structural-v2"},
                         "hints_note": "图不完整，可能藏着 sink；请先补链路再判断。",
                         "priority": 1, "bucket": "U", "role": "secondary", "related_tasks": [],

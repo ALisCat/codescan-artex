@@ -41,6 +41,7 @@ type VulnDef = { key: string; label: string };
 
 const VULNS: VulnDef[] = [
   { key: "authz", label: "越权" },
+  { key: "authn", label: "认证/回调" },
   { key: "sql-injection", label: "SQLi" },
   { key: "command-exec", label: "命令/表达式" },
   { key: "ssrf", label: "SSRF" },

@@ -1,0 +1,27 @@
+# authn 分析器：只找认证/签名/回调真实性相关的结构证据。
+# 不判断签名是否可绕过、密钥是否泄露；这些交给 worker。
+
+# 回调/支付通知类入口
+callback_path:
+  - '(?i)(callback|notify|webhook|paynotify|refundnotify|notifycallback|paycallback|refundcallback)'
+
+# token/会话类入口（login 本身不在这里，避免把公开登录做成认证缺口）
+token_path:
+  - '(?i)(token|jwt|session|verifytoken|checktoken|oauth|sso)'
+
+# 签名/完整性校验
+signature:
+  - '(?i)checkSign|verifySign|checkSignature|verifySignature|validateSign|signature'
+  - '(?i)HmacSHA|HmacUtils|Mac\.getInstance|hmac|HMAC'
+  - '(?i)secretKey|appSecret|appId|partnerSecret'
+  - '(?i)sign\s*\(|signature\s*\('
+
+# 时间戳/nonce/重放保护
+replay:
+  - '(?i)timestamp|nonce|replay|expire|expiresAt'
+
+# 认证主体/token 校验
+authentication:
+  - '(?i)RequestHeaderUtil|getRequestHeader|TokenUtil|JWTVerifier|Jwts\.parser'
+  - '(?i)SecurityContext|@AuthenticationPrincipal|@PreAuthorize|@Secured|LoginUser|Principal'
+  - '(?i)getHeader\s*\(\s*["'']token["'']|verify\s*\(\s*token'

@@ -6,6 +6,7 @@ import json
 
 from .context import AnalysisContext
 from .analyzers.authz import AuthzAnalyzer
+from .analyzers.authn import AuthnAnalyzer
 from .analyzers.sql_injection import SqlInjectionAnalyzer
 from .analyzers.command_exec import CommandExecAnalyzer
 from .analyzers.ssrf import SsrfAnalyzer
@@ -16,6 +17,7 @@ from .analyzers.xss import XssAnalyzer
 
 ANALYZERS = {
     "authz": AuthzAnalyzer,
+    "authn": AuthnAnalyzer,
     "sql-injection": SqlInjectionAnalyzer,
     "command-exec": CommandExecAnalyzer,
     "ssrf": SsrfAnalyzer,

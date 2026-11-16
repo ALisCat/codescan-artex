@@ -141,3 +141,19 @@ principal 来源 + resource/role 参与条件 + 拒绝路径
 - demo-v1：全部无 gap；
 - 改名 `checkOwner → ensureAccess` 后检测结果不变；
 - fixture：任意命名 helper、返回值 helper、`@PreAuthorize`、业务校验（amount<0）不误判。
+
+## authn：认证/回调
+
+`authn` 与 `authz` 分开：
+
+- `authz`：principal/resource、角色、租户、归属；
+- `authn`：token/session、签名/HMAC、时间戳/nonce、回调真实性。
+
+当前规则：
+
+- callback 入口要求 `signature` + `replay_protection`；
+- token 入口要求 `authentication`；
+- 普通接口返回 `impossible`，不生成 authn 任务；
+- `authn_model` 带 `required/decisions/gaps/unknowns/search_policy`。
+
+saas-git 当前只命中 `notifyCallBack`，demo 语料 0 误报。

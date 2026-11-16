@@ -201,12 +201,19 @@ func matrixAuthzSearchPolicy(intent *db.Node) (authz bool, allow bool, budget in
 		return false, false, 0
 	}
 	h := p.Cases[0].Hints
-	if len(_asMap(h["authz_model"])) == 0 {
+	am := _asMap(h["authz_model"])
+	an := _asMap(h["authn_model"])
+	if len(am) == 0 && len(an) == 0 {
 		return false, false, 0
 	}
 	sp := _asMap(h["search_policy"])
 	if len(sp) == 0 {
-		// 兼容没有 search_policy 的旧 authz hints：保留有限的搜索能力。
+		if len(an) > 0 {
+			sp = _asMap(an["search_policy"])
+		}
+	}
+	if len(sp) == 0 {
+		// 兼容没有 search_policy 的旧 authz/authn hints：保留有限的搜索能力。
 		return true, true, 2
 	}
 	allow = true
@@ -523,6 +530,43 @@ func writeAuthzModel(b *strings.Builder, h map[string]any) bool {
 	return true
 }
 
+// writeAuthnModel 渲染认证/签名/回调真实性模型。
+func writeAuthnModel(b *strings.Builder, h map[string]any) bool {
+	am := _asMap(h["authn_model"])
+	if len(am) == 0 {
+		return false
+	}
+	b.WriteString("\n  【认证/回调判定模型】")
+	fmt.Fprintf(b, "\n   kind    : %s", _str(am["endpoint_kind"]))
+	for i, x := range _asList(am["decisions"]) {
+		if i >= 10 {
+			break
+		}
+		d := _asMap(x)
+		fmt.Fprintf(b, "\n   - %s: %s @ %s:%s", _str(d["kind"]), _str(d["rule"]),
+			_str(d["file"]), _str(d["line"]))
+	}
+	fmt.Fprintf(b, "\n   required: %s", strings.Join(_strList(am["required"]), ", "))
+	gaps := _strList(am["gaps"])
+	if len(gaps) == 0 {
+		gaps = []string{"none"}
+	}
+	fmt.Fprintf(b, "\n   gaps    : %s", strings.Join(gaps, ", "))
+	sp := _asMap(am["search_policy"])
+	if len(sp) > 0 {
+		fmt.Fprintf(b, "\n   search  : allow=%v budget=%v kinds=%s",
+			sp["allow_global_search"], sp["search_budget"],
+			strings.Join(_strList(sp["search_kinds"]), ", "))
+		if pats := _strList(sp["search_patterns"]); len(pats) > 0 {
+			fmt.Fprintf(b, "\n            patterns: %s", strings.Join(pats, " | "))
+		}
+	}
+	for _, u := range _strList(am["unknowns"]) {
+		fmt.Fprintf(b, "\n   unknown : %s", u)
+	}
+	return true
+}
+
 // matrixIntentPrelude 把矩阵意图里的 flow/sites/guards 压成一段可读文本，
 // 放在 JSON payload 之前，避免 worker 把线索埋在一大段 JSON 里继续全仓探索。
 func matrixIntentPrelude(intent *db.Node) string {
@@ -555,6 +599,8 @@ func matrixIntentPrelude(intent *db.Node) string {
 		fmt.Fprintf(&b, "\n格子 %s（%s）", c.CellKey, c.VulnClass)
 		h := c.Hints
 		hasModel := writeAuthzModel(&b, h)
+		hasAuthn := writeAuthnModel(&b, h)
+		hasModel = hasModel || hasAuthn
 		anyAuthzModel = anyAuthzModel || hasModel
 		flow := _asList(h["flow"])
 		guardRe := regexp.MustCompile(`(?i)checkOwner|checkPermission|verifyOwner|assertOwner|hasRole|hasPermission|isOwner|checkAuth`)
@@ -602,7 +648,7 @@ func matrixIntentPrelude(intent *db.Node) string {
 		}
 	}
 	if anyAuthzModel {
-		b.WriteString("\n【硬约束】只读 flow、authz_model、guard_helpers 中列出的文件；禁止 LS/Write/Edit。")
+		b.WriteString("\n【硬约束】只读 flow、authz_model/authn_model、guard_helpers 中列出的文件；禁止 LS/Write/Edit。")
 		b.WriteString("\n搜索策略：search.allow=false 时禁止 Glob/Grep；allow=true 时只允许 Glob/Grep 合计 search.budget 次，且只搜 search.kinds/search.patterns 覆盖的守卫类型。")
 		b.WriteString("\n禁止查 pom、无关 Controller/Service、测试、标注、GROUND-TRUTH，也不要创建笔记文件。预算用完或 gaps 已确认后必须立刻 submit_cell_verdict。")
 	} else {
