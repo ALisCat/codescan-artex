@@ -1,0 +1,31 @@
+# authz 分析器的结构模式（只用于找资源访问/证据，不参与判定）
+resource_file:
+  - '(?i)Files\.(read|write|copy|move|newInputStream|newOutputStream|readAllBytes)'
+  - 'transferTo\s*\('
+  - '(?i)(FileInputStream|FileOutputStream|FileReader|FileWriter|RandomAccessFile)'
+  - '\.resolve\s*\('
+
+resource_db:
+  - 'JdbcTemplate|NamedParameterJdbcTemplate|jdbcTemplate'
+  - '\.(executeQuery|executeUpdate|executeBatch|execute)\s*\('
+  - 'SqlSession|BaseMapper|Mapper\.'
+  - 'DataSource|getConnection\s*\('
+
+resource_external:
+  - 'HttpRequest\.(post|get)'
+  - 'HttpUtil\.'
+  - '(RestTemplate|WebClient|OkHttp|OkHttpClient)'
+  - '\.(getForObject|postForObject|getForEntity|postForEntity|exchange)\s*\('
+  - '(?i)getHisData|sendPostToApi'
+
+principal:
+  - 'RequestHeaderUtil|getRequestHeader'
+  - 'UserContext|SecurityContext|@AuthenticationPrincipal|\bLoginUser\b|\bPrincipal\b'
+
+ownership:
+  - '(?i)checkOwner|checkOwnership|checkPermission|assertOwner|verifyOwner'
+  - '(?i)Objects\.equals\s*\([^;]{0,120}get(Patient|User|Owner)Id[^;]{0,120}(user|principal|loginUser)\.'
+  - '(?i)(user|principal|loginUser)\.\w+\s*\.equals\s*\([^;]{0,120}get(Patient|User|Owner)Id'
+
+tenant_param: '(?i)(tenant|hosp|branch|org|dept)'
+unresolved_relevant: '(?i)(service|client|manager|helper|util|mapper|dao|repository)$'

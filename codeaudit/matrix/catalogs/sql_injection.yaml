@@ -1,0 +1,29 @@
+# SQLi 分析器的结构模式：只用于找 SQL 构造，不判断是否安全
+jdbc:
+  - '\.(executeQuery|executeUpdate|executeBatch|execute)\s*\('
+  - 'prepareStatement\s*\(|createStatement\s*\('
+  - 'jdbcTemplate\.|NamedParameterJdbcTemplate'
+  - 'SqlSession'
+wrapper_raw:
+  - 'last'
+  - 'apply'
+  - 'inSql'
+  - 'orderBy'
+  - 'orderByAsc'
+  - 'orderByDesc'
+  - 'having'
+wrapper_parameterized:
+  - 'eq'
+  - 'ne'
+  - 'like'
+  - 'in'
+  - 'ge'
+  - 'le'
+  - 'gt'
+  - 'lt'
+sql_dollar: '\$\{'
+sql_placeholder: '#\{|\?'
+guards:
+  - '(?i)normalize|whitelist|allowedSort|allowedOrder|SORT_|ORDER_'
+  - 'setString\s*\(|setLong\s*\('
+unresolved_relevant: '(?i)(service|client|manager|helper|util|mapper|dao|repository)$'

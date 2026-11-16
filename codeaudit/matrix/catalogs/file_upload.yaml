@@ -1,0 +1,13 @@
+sinks:
+  - '\.transferTo\s*\('
+  - 'Files\.(write|copy|move|newOutputStream)'
+  - 'FileOutputStream'
+  - 'FileUtils\.copyInputStreamToFile'
+guards:
+  - 'UUID\.randomUUID'
+  - 'cleanPath\s*\('
+  - 'contains\s*\(\s*"\.\."'
+  - 'allowedExt|suffixList|white_suffix|picSuffixList|checkPicSuffix'
+input:
+  locations: ['multipart']
+  param_re: '(?i)file|upload|attach'

@@ -1,0 +1,24 @@
+endpoint,method,vulnclass,verdict,file,line,control_at,note
+/api/notice/send,POST,ssrf,vuln,src/main/java/com/community/clinic/service/NoticeService.java,58,,webhook 由请求体完全控制，直接 postForEntity
+/api/notice/send,POST,authz,safe,src/main/java/com/community/clinic/interceptor/AuthInterceptor.java,65,AuthInterceptor.java:65-68,/api/notice/** 要求 ADMIN
+/api/notice/send,POST,xss,safe,src/main/java/com/community/clinic/service/NoticeService.java,58,,写 JSON 到 webhook，不回显到浏览器
+/api/appointment/{id},GET,authz,safe,src/main/java/com/community/clinic/service/AppointmentService.java,46,"AppointmentService.java:42,46",tenant 过滤 + checkOwner
+/api/appointment/list,GET,authz,safe,src/main/java/com/community/clinic/service/AppointmentService.java,55,AppointmentService.java:55,仅 PATIENT 且按 userId+tenantId 查询
+/api/appointment/list,GET,sql-injection,safe,src/main/resources/mapper/AppointmentMapper.xml,7,AppointmentMapper.xml:7-17,全部 #{} 占位符
+/api/appointment/cancel,POST,authz,safe,src/main/java/com/community/clinic/service/AppointmentService.java,86,"AppointmentService.java:82,86",tenant 过滤 + checkOwner
+/api/appointment/cancel,POST,ssrf,safe,src/main/java/com/community/clinic/util/HisClient.java,111,HisClient.java:111,HIS 地址来自 sys_config，不由请求控制
+/api/appointment/{id}/reschedule,POST,authz,safe,src/main/java/com/community/clinic/service/AppointmentService.java,111,"AppointmentService.java:107,111",tenant 过滤 + checkOwner
+/api/auth/login,POST,authz,na,,,,公开接口，登录本身不做资源授权
+/api/auth/login,POST,sql-injection,safe,src/main/java/com/community/clinic/mapper/PatientMapper.java,11,PatientMapper.java:11,#{phone} 占位符
+/api/report/appointments,GET,sql-injection,safe,src/main/java/com/community/clinic/service/ReportService.java,43,ReportService.java:43-48,sort 白名单 normalizeSort；order 仅 asc/desc
+/api/report/appointments,GET,authz,safe,src/main/java/com/community/clinic/interceptor/AuthInterceptor.java,65,AuthInterceptor.java:65-68,/api/report/** 要求 ADMIN
+/api/report/appointments,GET,xss,safe,src/main/java/com/community/clinic/controller/ReportController.java,33,,响应 Content-Type 为 text/csv，不是 HTML
+/api/admin/config,POST,authz,safe,src/main/java/com/community/clinic/interceptor/AuthInterceptor.java,65,AuthInterceptor.java:65-68,/api/admin/** 要求 ADMIN
+/api/admin/config,POST,sql-injection,safe,src/main/java/com/community/clinic/mapper/SysConfigMapper.java,14,SysConfigMapper.java:14-15,#{} 占位符
+/api/file/upload,POST,authz,safe,src/main/java/com/community/clinic/service/FileService.java,60,"FileService.java:56,60",archive 按 tenant 查 + 患者归属校验
+/api/file/upload,POST,file-upload,safe,src/main/java/com/community/clinic/service/FileService.java,52,"FileService.java:52,64-71",大小限制 + cleanPath + .. 检查 + UUID 重命名
+/api/file/upload,POST,path-traversal,safe,src/main/java/com/community/clinic/service/FileService.java,64,FileService.java:64-71,cleanPath + .. 检查 + UUID 重命名，目录由 archiveId 数字拼接
+/api/file/download,GET,path-traversal,safe,src/main/java/com/community/clinic/service/FileService.java,104,FileService.java:104-107,baseDir + normalize + startsWith 限制
+/api/file/download,GET,authz,safe,src/main/java/com/community/clinic/service/FileService.java,118,FileService.java:118,attachment.patientId 与当前用户比对
+/api/external/patient-card,GET,authz,safe,src/main/java/com/community/clinic/service/ExternalService.java,37,"ExternalService.java:33,37",archive 按 tenant 查 + 患者归属校验
+/api/external/patient-card,GET,ssrf,safe,src/main/java/com/community/clinic/util/HisClient.java,72,"HisClient.java:72,111",HIS host 来自配置，archiveId 是 Long

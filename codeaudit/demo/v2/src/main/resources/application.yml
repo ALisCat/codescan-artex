@@ -1,0 +1,43 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:clinic}
+    username: ${DB_USER:clinic}
+    password: ${DB_PASSWORD:clinic}
+    driver-class-name: org.postgresql.Driver
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+    database: 0
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+  sql:
+    init:
+      mode: always
+      encoding: UTF-8
+      schema-locations: classpath:schema.sql
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.community.clinic.model
+  configuration:
+    map-underscore-to-camel-case: true
+
+clinic:
+  # 附件根目录，上传后结构为 <upload-dir>/<archiveId>/<文件名>
+  upload-dir: /data/clinic/upload
+  max-file-size: 10485760
+  auth:
+    # 登录与角色拦截器的白名单
+    whitelist:
+      - /api/auth/login
+      - /api/health
+      - /error
+
+logging:
+  level:
+    com.community.clinic: info

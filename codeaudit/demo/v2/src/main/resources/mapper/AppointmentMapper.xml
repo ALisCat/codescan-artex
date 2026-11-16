@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.community.clinic.mapper.AppointmentMapper">
+
+    <sql id="patientPageWhere">
+        where a.patient_id = #{patientId}
+          and a.tenant_id = #{tenantId}
+        <if test="status != null and status != ''">
+            and a.status = #{status}
+        </if>
+        <if test="beginDate != null">
+            and a.reg_date &gt;= #{beginDate}
+        </if>
+        <if test="endDate != null">
+            and a.reg_date &lt;= #{endDate}
+        </if>
+    </sql>
+
+    <select id="findDetail" resultType="com.community.clinic.model.AppointmentDetail">
+        select a.id,
+               a.patient_id,
+               a.reg_date,
+               a.time_range,
+               a.status,
+               a.fee,
+               p.name    as patient_name,
+               d.name    as doctor_name,
+               dept.name as dept_name
+        from appointment a
+                 left join patient p on p.id = a.patient_id
+                 left join doctor d on d.id = a.doctor_id
+                 left join dept dept on dept.id = d.dept_id
+        where a.id = #{id}
+          and a.tenant_id = #{tenantId}
+    </select>
+
+    <select id="findById" resultType="com.community.clinic.model.Appointment">
+        select id, patient_id, doctor_id, reg_date, time_range, status, fee, tenant_id
+        from appointment
+        where id = #{id}
+          and tenant_id = #{tenantId}
+    </select>
+
+    <select id="countByPatient" resultType="int">
+        select count(*)
+        from appointment a
+        <include refid="patientPageWhere"/>
+    </select>
+
+    <select id="pageByPatient" resultType="com.community.clinic.model.Appointment">
+        select a.id, a.patient_id, a.doctor_id, a.reg_date, a.time_range, a.status, a.fee, a.tenant_id
+        from appointment a
+        <include refid="patientPageWhere"/>
+        order by a.reg_date desc, a.id desc
+        limit #{limit} offset #{offset}
+    </select>
+
+    <update id="updateStatus">
+        update appointment
+        set status = #{status}
+        where id = #{id}
+    </update>
+
+    <update id="updateSchedule">
+        update appointment
+        set reg_date   = #{regDate},
+            time_range = #{timeRange}
+        where id = #{id}
+    </update>
+
+    <select id="countSlot" resultType="int">
+        select count(*)
+        from appointment
+        where doctor_id = #{doctorId}
+          and reg_date = #{regDate}
+          and time_range = #{timeRange}
+          and status &lt;&gt; 'CANCELLED'
+    </select>
+
+    <select id="reportRows" resultType="java.util.Map">
+        select reg_date            as reg_date,
+               status              as status,
+               count(*)            as cnt,
+               coalesce(sum(fee), 0) as total_fee
+        from appointment
+        where tenant_id = #{tenantId}
+        group by reg_date, status
+        order by ${sort} ${order}
+    </select>
+
+</mapper>

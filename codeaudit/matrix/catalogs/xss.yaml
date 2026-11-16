@@ -1,0 +1,10 @@
+sinks:
+  - 'getWriter\s*\(\s*\)'
+  - 'sendRedirect'
+  - '\.addHeader\s*\(|\.setHeader\s*\('
+  - 'ModelAndView'
+  - 'PrintWriter'
+guards:
+  - 'HtmUtils|htmlEscape|escapeHtml|Encode\.forHtml|StringEscapeUtils\.escapeHtml'
+input:
+  any: true

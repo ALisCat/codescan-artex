@@ -1,0 +1,24 @@
+endpoint,method,vulnclass,verdict,file,line,control_at,note
+/api/notice/send,POST,ssrf,vuln,src/main/java/com/community/clinic/service/NoticeService.java,58,,webhook 由请求体完全控制，直接 postForEntity
+/api/notice/send,POST,authz,vuln,src/main/java/com/community/clinic/interceptor/AuthInterceptor.java,54,,管理员角色校验被删除，任意登录用户可群发通知
+/api/notice/send,POST,xss,safe,src/main/java/com/community/clinic/service/NoticeService.java,58,,写 JSON 到 webhook，不回显到浏览器
+/api/appointment/{id},GET,authz,vuln,src/main/java/com/community/clinic/service/AppointmentService.java,46,,checkOwner 被删除，患者可读同租户他人预约
+/api/appointment/list,GET,authz,safe,src/main/java/com/community/clinic/service/AppointmentService.java,55,AppointmentService.java:55,仅 PATIENT 且按 userId+tenantId 查询
+/api/appointment/list,GET,sql-injection,safe,src/main/resources/mapper/AppointmentMapper.xml,7,AppointmentMapper.xml:7-17,全部 #{} 占位符
+/api/appointment/cancel,POST,authz,safe,src/main/java/com/community/clinic/service/AppointmentService.java,86,"AppointmentService.java:82,86",tenant 过滤 + checkOwner
+/api/appointment/cancel,POST,ssrf,safe,src/main/java/com/community/clinic/util/HisClient.java,111,HisClient.java:111,HIS 地址来自 sys_config，不由请求控制
+/api/appointment/{id}/reschedule,POST,authz,safe,src/main/java/com/community/clinic/service/AppointmentService.java,111,"AppointmentService.java:107,111",tenant 过滤 + checkOwner
+/api/auth/login,POST,authz,na,,,,公开接口，登录本身不做资源授权
+/api/auth/login,POST,sql-injection,safe,src/main/java/com/community/clinic/mapper/PatientMapper.java,11,PatientMapper.java:11,#{phone} 占位符
+/api/report/appointments,GET,sql-injection,vuln,src/main/java/com/community/clinic/service/ReportService.java,26,,sort/order 未白名单，XML 用 ${sort} ${order}
+/api/report/appointments,GET,authz,vuln,src/main/java/com/community/clinic/interceptor/AuthInterceptor.java,54,,管理员角色校验被删除，任意登录用户可看报表
+/api/report/appointments,GET,xss,safe,src/main/java/com/community/clinic/controller/ReportController.java,33,,响应 Content-Type 为 text/csv，不是 HTML
+/api/admin/config,POST,authz,vuln,src/main/java/com/community/clinic/interceptor/AuthInterceptor.java,54,,管理员角色校验被删除，任意登录用户可改配置
+/api/admin/config,POST,sql-injection,safe,src/main/java/com/community/clinic/mapper/SysConfigMapper.java,14,SysConfigMapper.java:14-15,#{} 占位符
+/api/file/upload,POST,authz,safe,src/main/java/com/community/clinic/service/FileService.java,60,"FileService.java:56,60",archive 按 tenant 查 + 患者归属校验
+/api/file/upload,POST,file-upload,vuln,src/main/java/com/community/clinic/service/FileService.java,65,,原始文件名直接落盘，无 cleanPath/../检查/UUID
+/api/file/upload,POST,path-traversal,vuln,src/main/java/com/community/clinic/service/FileService.java,97,,原始文件名含 ../ 可写出上传目录
+/api/file/download,GET,path-traversal,vuln,src/main/java/com/community/clinic/service/FileService.java,98,,直接 Paths.get(path)，无 baseDir/startsWith，可读任意文件
+/api/file/download,GET,authz,vuln,,,,M2 同时删除 attachment 归属校验：任意登录用户可读任意文件（与 path-traversal 同根因）
+/api/external/patient-card,GET,authz,safe,src/main/java/com/community/clinic/service/ExternalService.java,37,"ExternalService.java:33,37",archive 按 tenant 查 + 患者归属校验
+/api/external/patient-card,GET,ssrf,safe,src/main/java/com/community/clinic/util/HisClient.java,72,"HisClient.java:72,111",HIS host 来自配置，archiveId 是 Long

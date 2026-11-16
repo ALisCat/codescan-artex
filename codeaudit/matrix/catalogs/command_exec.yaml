@@ -1,0 +1,19 @@
+sinks:
+  - 'Runtime\.getRuntime'
+  - 'new\s+ProcessBuilder'
+  - '\.exec\s*\('
+  - 'ScriptEngine'
+  - '\.eval\s*\('
+  - 'GroovyShell'
+  - 'SpelExpressionParser|ExpressionParser|parseExpression'
+  - 'QLExpress|ExpressRunner'
+  - 'VelocityEngine|Velocity\.'
+  - 'freemarker|Configuration\.getTemplate'
+  - 'new\s+Yaml\s*\(|Yaml\s*\('
+  - 'Ognl|MVEL|JEXL'
+guards:
+  - 'Pattern\.compile|\.matches\s*\('
+  - 'SimpleEvaluationContext'
+  - 'Whitelist|whitelist|ALLOWED_CMD|cmdFilter'
+input:
+  any: true

@@ -1,0 +1,15 @@
+sinks:
+  - 'new\s+File\s*\('
+  - 'Paths\.get\s*\('
+  - '\.resolve\s*\('
+  - 'FileInputStream|FileReader|RandomAccessFile'
+  - 'Files\.(read|list|walk|newInputStream|readAllBytes)'
+  - 'getRealPath'
+  - 'ZipEntry|ZipInputStream'
+guards:
+  - 'getCanonicalPath|toRealPath'
+  - '\.startsWith\s*\('
+  - 'cleanPath\s*\('
+  - 'contains\s*\(\s*"\.\."'
+input:
+  param_re: '(?i)path|file|name|dir'

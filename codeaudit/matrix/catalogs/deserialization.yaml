@@ -1,0 +1,13 @@
+sinks:
+  - 'ObjectInputStream'
+  - '\.readObject\s*\('
+  - 'XMLDecoder'
+  - 'XStream|fromXML'
+  - 'enableDefaultTyping|activateDefaultTyping'
+  - 'autoType|AutoType'
+  - 'Hessian|Kryo'
+  - 'new\s+Yaml\s*\(|Yaml\s*\('
+guards:
+  - 'SafeMode|setEnabledDefaultTyping|allowlist|Whitelist|blacklist|ClassFilter'
+input:
+  any: true

@@ -1,0 +1,14 @@
+sinks:
+  - 'new\s+URL\s*\('
+  - '\.openConnection\s*\('
+  - 'HttpRequest\.(post|get)'
+  - 'HttpUtil\.(createPost|createGet|post|get)'
+  - 'RestTemplate|WebClient|OkHttp|OkHttpClient'
+  - '\.(getForObject|postForObject|getForEntity|postForEntity|exchange)\s*\('
+  - 'ImageIO\.read'
+  - 'Feign|feign'
+guards:
+  - 'Whitelist|whitelist|allowedHost|SafeDomain|checkSSRF|SSRFHook|checkURL'
+  - 'startsWith\s*\(\s*"https?'
+input:
+  any: true
