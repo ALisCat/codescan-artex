@@ -46,7 +46,7 @@ def main():
                 "trace": [],
             }
         elif state == "unknown":
-            hints = {"state": "unknown"}
+            hints = c.get("hints") or {"state": "unknown"}
             row = {
                 "task_id": key,
                 "endpoint": {"method": ep["method"], "url": ep["url"], "asset_id": 0},
@@ -72,7 +72,7 @@ def main():
                 "priority": 0,
                 "bucket": "N/A",
                 "checklist": [],
-                "hints": {},
+                "hints": c.get("hints") or {},
                 "hints_note": "",
                 "reason": c.get("reason") or "结构上未发现该类 sink",
                 "trace": c.get("trace") or [],

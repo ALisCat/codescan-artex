@@ -186,11 +186,12 @@ func (s *Server) caManualAudit(w http.ResponseWriter, r *http.Request) {
 		"hints":     hints,
 	}}
 	payload := map[string]any{
-		"summary":    fmt.Sprintf("人工发起：审计 %s %s 的「%s」风险", c.Method, c.EndpointURL, cn),
-		"cell_keys":  []string{c.CellKey},
-		"cases":      cases,
-		"manual":     true,
-		"suggestion": suggestion,
+		"summary":        fmt.Sprintf("人工发起：审计 %s %s 的「%s」风险", c.Method, c.EndpointURL, cn),
+		"cell_keys":      []string{c.CellKey},
+		"cases":          cases,
+		"manual":         true,
+		"analyzer_state": c.Status,
+		"suggestion":     suggestion,
 		"hints_note": "人工发起：矩阵原判定可能是不适用 / 有守卫 / 未验证；请优先按人工建议审计这一格，" +
 			"但仍以源码证据为准，结论只能是 confirmed / clean / needs_more。",
 		"output_contract": map[string]any{

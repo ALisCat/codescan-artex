@@ -259,6 +259,17 @@ def main():
                 "sinks": evidence.get("sites") or evidence.get("sql_sites") or evidence.get("resource_accesses") or [],
                 "guards": guards,
             }
+            entry["hints"] = {
+                "state": state,
+                "analyzer_state": state,
+                "flow": ep.get("flow", [])[:20],
+                "sites": entry["sinks"],
+                "sinks": entry["sinks"],
+                "params": ep.get("params", []),
+                "subtype": evidence.get("subtype"),
+                "cwe": evidence.get("cwe") or [],
+                "tags": evidence.get("tags") or [],
+            }
             if state == POSSIBLE:
                 p = _priority(ep, f)
                 entry.update({"priority": p, "bucket": _bucket(p, state)})
@@ -355,6 +366,12 @@ def main():
             },
             "vulnclass": vuln, "state": f["state"], "eligibility": "applicable",
             "signals": [], "variant": "repo", "sinks": sites, "guards": [],
+        }
+        entry["hints"] = {
+            "state": f["state"], "analyzer_state": f["state"],
+            "flow": [], "sites": sites, "sinks": sites, "params": [],
+            "subtype": ev.get("subtype"), "cwe": ev.get("cwe") or [],
+            "tags": ev.get("tags") or [], "scope": "repo",
         }
         p = _priority(ep, f)
         entry.update({"priority": p, "bucket": _bucket(p, f["state"])})

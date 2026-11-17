@@ -92,3 +92,21 @@ func TestGateAuthnSearchTools(t *testing.T) {
 		}
 	}
 }
+
+func TestManualNotApplicablePreludeAllowsExpansion(t *testing.T) {
+	payload := []byte(`{"manual":true,"analyzer_state":"na","cases":[{"cell_key":"/x:authz","vulnclass":"authz","hints":{"flow":[{"name":"detail","file":"X.java","line":10}],"sites":[]}}]}`)
+	n := &db.Node{Payload: payload}
+	got := matrixIntentPrelude(n)
+	for _, want := range []string{"人工审计", "原判定: na", "detail @ X.java:10", "最多 4 次"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in manual prelude:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "只读 flow") {
+		t.Fatalf("manual N/A should allow expansion, got:\n%s", got)
+	}
+	authz, allow, budget := matrixAuthzSearchPolicy(n)
+	if !authz || !allow || budget != 4 {
+		t.Fatalf("manual search policy = authz=%v allow=%v budget=%d, want true/true/4", authz, allow, budget)
+	}
+}

@@ -193,12 +193,17 @@ func matrixAuthzSearchPolicy(intent *db.Node) (authz bool, allow bool, budget in
 		return false, false, 0
 	}
 	var p struct {
-		Cases []struct {
+		Manual bool `json:"manual"`
+		Cases  []struct {
 			Hints map[string]any `json:"hints"`
 		} `json:"cases"`
 	}
 	if err := json.Unmarshal(intent.Payload, &p); err != nil || len(p.Cases) == 0 {
 		return false, false, 0
+	}
+	if p.Manual {
+		// 人工发起（尤其 N/A 覆盖）允许从 flow 起点做有限扩展。
+		return true, true, 4
 	}
 	h := p.Cases[0].Hints
 	am := _asMap(h["authz_model"])
@@ -592,10 +597,12 @@ func matrixIntentPrelude(intent *db.Node) string {
 		return ""
 	}
 	var p struct {
-		Summary  string   `json:"summary"`
-		CellKeys []string `json:"cell_keys"`
-		CellKey  string   `json:"cell_key"`
-		Cases    []struct {
+		Summary       string   `json:"summary"`
+		CellKeys      []string `json:"cell_keys"`
+		CellKey       string   `json:"cell_key"`
+		Manual        bool     `json:"manual"`
+		AnalyzerState string   `json:"analyzer_state"`
+		Cases         []struct {
 			CellKey   string         `json:"cell_key"`
 			VulnClass string         `json:"vulnclass"`
 			Hints     map[string]any `json:"hints"`
@@ -666,7 +673,11 @@ func matrixIntentPrelude(intent *db.Node) string {
 			}
 		}
 	}
-	if anyAuthzModel {
+	if p.Manual {
+		b.WriteString("\n【人工审计】原判定: " + firstNonEmpty(p.AnalyzerState, "unknown") +
+			"；这不是安全结论。flow 只作为入口参考，允许从 flow 扩展：额外 Read 最多 8 个文件，Grep/Glob 合计最多 4 次。")
+		b.WriteString("\n不要全仓扫描，不要创建笔记文件；找不到证据就写 needs_more。必须最终 submit_cell_verdict。")
+	} else if anyAuthzModel {
 		b.WriteString("\n【硬约束】只读 flow、authz_model/authn_model、guard_helpers 中列出的文件；禁止 LS/Write/Edit。")
 		b.WriteString("\n搜索策略：search.allow=false 时禁止 Glob/Grep；allow=true 时只允许 Glob/Grep 合计 search.budget 次，且只搜 search.kinds/search.patterns 覆盖的守卫类型。")
 		b.WriteString("\n禁止查 pom、无关 Controller/Service、测试、标注、GROUND-TRUTH，也不要创建笔记文件。预算用完或 gaps 已确认后必须立刻 submit_cell_verdict。")
