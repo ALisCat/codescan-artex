@@ -1,7 +1,15 @@
 {
-  "vulnclass": "sql-injection", "scope": "endpoint",
+  "vulnclass": "sql-injection",
+  "scope": "endpoint",
   "endpoints": [
-    {"method": "GET", "url": "/api/sql/query", "state": "possible",
-     "guards": [{"kind": "guard", "file": "SqlController.java"}]}
+    {
+      "method": "GET",
+      "url": "/api/sql/query",
+      "state": "impossible",
+      "sql_mode": "parameterized_only",
+      "neutralizers": [
+        "bound_parameter"
+      ]
+    }
   ]
 }

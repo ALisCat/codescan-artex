@@ -35,6 +35,14 @@ def _actual_sites(finding):
     return out
 
 
+def _site_file(site, expected):
+    return _file_match(site.get("file"), expected) or _file_match(site.get("sql_file"), expected)
+
+
+def _site_line(site, expected):
+    return _line_match(site.get("line"), expected) or _line_match(site.get("sql_line"), expected)
+
+
 def _actual_gaps(finding):
     ev = finding.get("evidence") or {}
     # authz_model / authn_model / csrf_model / xxe_model / ...
@@ -55,9 +63,7 @@ def _match_sites(expected_sites, actual_sites):
     for want in expected_sites:
         matched = False
         for site in actual_sites:
-            if _file_match(site.get("file"), want.get("file")) and _line_match(
-                site.get("line"), want.get("line")
-            ):
+            if _site_file(site, want.get("file")) and _site_line(site, want.get("line")):
                 matched = True
                 break
         if not matched:
@@ -107,6 +113,13 @@ def _check_finding(expected, finding, label):
         )
     issues.extend(_match_list(expected.get("cwe"), ev.get("cwe"), label + " cwe"))
     issues.extend(_match_list(expected.get("gaps"), _actual_gaps(finding), label + " gaps"))
+    if expected.get("sql_mode") and ev.get("sql_mode") != expected.get("sql_mode"):
+        issues.append("%s sql_mode expected %s, got %s" % (
+            label, expected.get("sql_mode"), ev.get("sql_mode")))
+    if expected.get("neutralizers") is not None:
+        actual_neutralizers = [n.get("kind") for n in (ev.get("neutralizers") or [])]
+        issues.extend(_match_list(expected.get("neutralizers"), actual_neutralizers,
+                                  label + " neutralizers"))
     issues.extend(_match_sites(expected.get("sites"), _actual_sites(finding)))
     issues.extend(_match_guards(expected.get("guards"), _actual_guards(finding)))
     if expected.get("missing_contains"):

@@ -269,6 +269,9 @@ def main():
                 "subtype": evidence.get("subtype"),
                 "cwe": evidence.get("cwe") or [],
                 "tags": evidence.get("tags") or [],
+                "sql_mode": evidence.get("sql_mode") if vuln == "sql-injection" else None,
+                "sql_features": evidence.get("sql_features") if vuln == "sql-injection" else None,
+                "neutralizers": evidence.get("neutralizers") if vuln == "sql-injection" else None,
             }
             if state == POSSIBLE:
                 p = _priority(ep, f)
@@ -300,6 +303,9 @@ def main():
                         ),
                         "params": ep.get("params", []),
                         "analyzer": "structural-v2",
+                        "sql_mode": evidence.get("sql_mode") if vuln == "sql-injection" else None,
+                        "sql_features": evidence.get("sql_features") if vuln == "sql-injection" else None,
+                        "neutralizers": evidence.get("neutralizers") if vuln == "sql-injection" else None,
                     },
                     "hints_note": "结构上存在 sink/资源访问，不代表漏洞成立；请判断可达性、白名单、校验。",
                     "priority": p,

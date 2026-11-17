@@ -176,6 +176,11 @@ submit_cell_verdict(cell_key, verdict, reason, evidence)
 
 仓库级类型不占接口列，但会以合成的 `REPO` 行进入矩阵。
 
+SQL 注入分析器按“特征”关联，而不是“有 SQL 就派”：`${}`、字符串拼接、
+动态表名/列名/ORDER BY、raw Wrapper 参数、无法解析的 SQL 会进入 `possible`；
+纯 `#{}` / `?` + 固定模板、`.eq()`、常量 `orderBy("name")` 不关联。
+白名单等守卫不消除特征，只作为 worker 证据。
+
 ---
 
 ## 越权与认证模型
@@ -360,7 +365,7 @@ cd codeaudit
 python3 -m matrix.tests.run_all
 ```
 
-- 72 个分析器 fixture，覆盖 21 类分析器；
+- 85 个分析器 fixture，覆盖 21 类分析器；
 - demo v1/v2/fresh-clinic 回归；
 - `BASELINE.json` 记录基线，`--check` 检测回归；
 - 不依赖 PostgreSQL、不调用 LLM。

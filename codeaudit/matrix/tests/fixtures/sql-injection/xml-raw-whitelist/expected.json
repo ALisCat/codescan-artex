@@ -1,0 +1,9 @@
+{
+  "vulnclass": "sql-injection", "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/report/list", "state": "possible",
+     "sql_mode": "raw",
+     "guards": [{"kind": "guard", "file": "ReportController.java"}],
+     "sites": [{"file": "ReportMapper.xml"}]}
+  ]
+}

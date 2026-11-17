@@ -50,6 +50,8 @@ fixtures/<vulnclass>/<case>/
       "guards": [{"kind": "ownership"}],
       "subtype": "optional",
       "cwe": ["CWE-639"],
+      "sql_mode": "optional: raw | parameterized_only | unknown | no_sql",
+      "neutralizers": ["optional", "bound_parameter"],
       "missing_contains": "optional"
     }
   ]

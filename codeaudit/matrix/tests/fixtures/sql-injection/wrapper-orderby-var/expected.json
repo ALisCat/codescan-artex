@@ -1,0 +1,6 @@
+{
+  "vulnclass": "sql-injection", "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/user/list", "state": "possible", "sql_mode": "raw", "neutralizers": []}
+  ]
+}

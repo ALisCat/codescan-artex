@@ -25,5 +25,4 @@ sql_dollar: '\$\{'
 sql_placeholder: '#\{|\?'
 guards:
   - '(?i)normalize|whitelist|allowedSort|allowedOrder|SORT_|ORDER_'
-  - 'setString\s*\(|setLong\s*\('
 unresolved_relevant: '(?i)(service|client|manager|helper|util|mapper|dao|repository)$'

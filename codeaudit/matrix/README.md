@@ -157,3 +157,25 @@ principal 来源 + resource/role 参与条件 + 拒绝路径
 - `authn_model` 带 `required/decisions/gaps/unknowns/search_policy`。
 
 saas-git 当前只命中 `notifyCallBack`，demo 语料 0 误报。
+
+## SQL 注入：特征关联（v0.2）
+
+SQL 分析器不再把“出现 SQL/DAO”直接当成 `possible`。它只关联 SQL 注入特征：
+
+| 特征 | 例子 | 关联 |
+| --- | --- | --- |
+| `${}` 原始插值 | `where id = ${id}` | possible |
+| 字符串拼接 / format | `"..." + id`、`String.format(...)` | possible |
+| 动态表名/列名/ORDER BY | `"from " + table` | possible |
+| raw Wrapper 参数 | `.last(sort)`、`.orderBy(sort)` | possible |
+| 常量 raw Wrapper | `.orderBy("name")`、`.last("limit 1")` | 不关联 |
+| 只有值绑定 | `#{}`、`?` + 固定模板、`.eq()` | 不关联（neutralizer） |
+| 白名单 | `${sort}` + `normalizeSort` | 仍 possible，guard 只作证据 |
+| SQL 文本/provider 无法解析 | `@SelectProvider`、变量来源不明 | unknown |
+
+实现：
+
+- `analyzers/sql_features.py`：SQL 文本、Wrapper、直接 JDBC 的特征提取；
+- `analyzers/sql_injection.py`：状态映射和 evidence；
+- evidence 新增 `sql_features`、`sql_mode`、`neutralizers`；
+- `impossible` 表示“没有观察到 SQL 注入特征”，不是“安全结论”。

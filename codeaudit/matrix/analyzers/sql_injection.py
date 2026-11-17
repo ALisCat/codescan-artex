@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""SQL 注入分析器：只找「SQL 构造」是否出现在接口 flow 里。
+"""SQL 注入特征分析器。
 
-不区分 #{}/?/${}/wrapper 是否安全——只把它们作为 evidence/guards_seen。
+只识别 SQL 注入的风险特征：
+  - ${} 原始插值
+  - 字符串拼接 / format 构造 SQL
+  - 动态表名、列名、ORDER BY、raw wrapper
+  - 无法解析的 SQL/provider
+
+不判断特征是否可达、是否有守卫、是否最终可利用。
+#{ } / ? / eq 等值绑定不是 SQL 注入特征，只记 neutralizer。
 """
 import re
 from pathlib import Path
@@ -10,6 +17,7 @@ from pathlib import Path
 import yaml
 
 from .base import Analyzer, Finding, POSSIBLE, IMPOSSIBLE, UNKNOWN
+from .sql_features import collect
 
 CATALOG = Path(__file__).resolve().parents[1] / "catalogs" / "sql_injection.yaml"
 
@@ -20,115 +28,14 @@ class SqlInjectionAnalyzer(Analyzer):
     def __init__(self):
         self.c = yaml.safe_load(CATALOG.read_text(encoding="utf-8"))
         self.jdbc_pats = [re.compile(p) for p in self.c.get("jdbc", [])]
-        self.raw_wrapper = set(self.c.get("wrapper_raw", []))
-        self.param_wrapper = set(self.c.get("wrapper_parameterized", []))
-        self.dollar_re = re.compile(self.c.get("sql_dollar", r"\$\{"))
-        self.placeholder_re = re.compile(self.c.get("sql_placeholder", r"#\{|\?"))
         self.guard_pats = [re.compile(p) for p in self.c.get("guards", [])]
         self.unresolved_re = re.compile(self.c.get("unresolved_relevant", r"(?i)service$"))
 
     def analyze(self, endpoint, ctx):
-        sites = []
-        seen = set()
-        class_fqns = {c.get("fqn") for c in ctx.graph.get("classes", [])}
-
-        # 1) 图里已识别的 DAO / mapper / wrapper
-        for d in endpoint.get("daos", []):
-            site = d.get("sql_site") or {}
-            sql = (site.get("sql") or "")
-            wrappers = d.get("wrapper", [])
-            raw_signals = []
-            param_signals = []
-            for w in wrappers:
-                if w.get("name") in self.raw_wrapper:
-                    raw_signals.append(w["name"])
-                elif w.get("name") in self.param_wrapper:
-                    param_signals.append(w["name"])
-            if self.dollar_re.search(sql):
-                raw_signals.append("${}")
-            if self.placeholder_re.search(sql):
-                param_signals.append("#{}")
-
-            key = ("dao", d.get("call_file"), d.get("call_line"), d.get("method"))
-            if key in seen:
-                continue
-            seen.add(key)
-            sites.append({
-                "kind": d.get("sql_kind") or "unknown",
-                "dao": d.get("dao"),
-                "method": d.get("method"),
-                "file": d.get("call_file"),
-                "line": d.get("call_line"),
-                "sql": sql[:800],
-                "sql_file": site.get("file"),
-                "sql_line": site.get("line"),
-                "raw_signals": sorted(set(raw_signals)),
-                "parameterized_signals": sorted(set(param_signals)),
-                "wrapper": [
-                    {"name": w.get("name"), "file": w.get("file"), "line": w.get("line")}
-                    for w in wrappers[:8]
-                ],
-            })
-
-        # 2) flow 里直接出现的 JDBC 调用
-        for step in endpoint.get("flow", []):
-            if step.get("kind") != "method":
-                continue
-            for pat in self.jdbc_pats:
-                for file, line, text in ctx.find(step, pat):
-                    key = ("jdbc", file, line, text[:40])
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    snippet = ctx.read(file, max(1, line - 1), line + 5)
-                    sites.append({
-                        "kind": "jdbc",
-                        "api": text[:80],
-                        "file": file,
-                        "line": line,
-                        "sql": snippet[:800],
-                        "raw_signals": [],
-                        "parameterized_signals": [],
-                    })
-
-        # 3) 输入前提：没有请求参数就不可能是注入
-        has_input = bool(endpoint.get("params"))
-
-        # 4) 未知：图里未解析、但可能是 service/dao 的调用
-        ACCESSOR = re.compile(r"^(get|set|is)[A-Z]")
-        IGNORE = {"parseObj", "parseObject", "toJson", "writeValueAsString", "readTree",
-                  "info", "error", "debug", "warn", "equals", "toString", "put", "getStr",
-                  "decodeStr", "isNotEmpty", "isBlank", "noneMatch", "stream", "fromJson",
-                  "getType", "getKey", "getValue", "size", "add", "collect"}
-
-        def relevant(u):
-            name = u.get("name") or ""
-            if ACCESSOR.match(name) or name in IGNORE:
-                return False
-            if self.unresolved_re.search(name):
-                return True
-            sc = (u.get("scope") or "").split("<")[0].strip()
-            if sc in class_fqns:
-                return True
-            caller = (u.get("caller_cls") or "").split(".")[-1]
-            if re.search(r"(?i)(Service|Client|Manager|Repository|Mapper|Dao)$", caller):
-                return True
-            text = u.get("scopeText") or ""
-            return bool(re.search(r"(?i)(Service|Client|Manager|Repository|Mapper|Dao)$", text))
-
-        relevant_unresolved = [u for u in endpoint.get("unresolved", []) if relevant(u)]
+        sites, features, unknowns, neutralizers = collect(endpoint, ctx, self.jdbc_pats)
 
         guards_seen = []
         gseen = set()
-        for s in sites:
-            for sig in s.get("parameterized_signals", []):
-                key = ("parameterized", s.get("file"), s.get("line"), sig)
-                if key in gseen:
-                    continue
-                gseen.add(key)
-                guards_seen.append({"kind": "parameterized", "text": sig,
-                                    "file": s.get("sql_file") or s.get("file"),
-                                    "line": s.get("sql_line") or s.get("line")})
         for step in endpoint.get("flow", []):
             if step.get("kind") != "method":
                 continue
@@ -138,14 +45,55 @@ class SqlInjectionAnalyzer(Analyzer):
                     if key in gseen:
                         continue
                     gseen.add(key)
-                    guards_seen.append({"kind": "guard", "text": text[:80], "file": file, "line": line})
+                    guards_seen.append({"kind": "guard", "text": text[:80],
+                                        "file": file, "line": line})
 
-        if not has_input:
-            state = IMPOSSIBLE
-            missing = "no request input"
-        elif sites:
+        class_fqns = {c.get("fqn") for c in ctx.graph.get("classes", [])}
+        ACCESSOR = re.compile(r"^(get|set|is)[A-Z]")
+        IGNORE = {"parseObj", "parseObject", "toJson", "writeValueAsString", "readTree",
+                  "info", "error", "debug", "warn", "equals", "toString", "put", "getStr",
+                  "decodeStr", "isNotEmpty", "isBlank", "noneMatch", "stream", "fromJson",
+                  "getType", "getKey", "getValue", "size", "add", "collect"}
+
+        SQL_STRONG = re.compile(
+            r"(?i)(sql|query|select|executeQuery|executeUpdate|executeBatch|"
+            r"batch|mapper|dao|repository|selectOne|selectList|selectPage|"
+            r"selectById|find|fetch|search|load)"
+        )
+        SQL_CRUD = re.compile(
+            r"(?i)(insert|update|delete|save|remove|count|list|page|get|put)"
+        )
+
+        def relevant(u):
+            name = u.get("name") or ""
+            if ACCESSOR.match(name) or name in IGNORE:
+                return False
+            sc = (u.get("scope") or "").split("<")[0].strip()
+            text = u.get("scopeText") or ""
+            scope_dao = bool(re.search(r"(?i)(Mapper|Dao|Repository)$", sc + " " + text))
+            # Strong SQL names are relevant even without a DAO-looking receiver.
+            if SQL_STRONG.search(name):
+                return True
+            # Generic CRUD/list names are relevant only on a DAO-looking receiver;
+            # otherwise "list"/"get"/"delete" from collections/Redis/utilities
+            # would become SQL unknown noise.
+            if SQL_CRUD.search(name) and scope_dao:
+                return True
+            if self.unresolved_re.search(name) and scope_dao:
+                return True
+            if scope_dao and sc in class_fqns:
+                return True
+            return False
+
+        relevant_unresolved = [u for u in endpoint.get("unresolved", []) if relevant(u)]
+
+        # State = feature association, not a security verdict.
+        if features:
             state = POSSIBLE
             missing = None
+        elif unknowns:
+            state = UNKNOWN
+            missing = "; ".join(u.get("reason") or "unknown SQL feature" for u in unknowns[:3])
         elif relevant_unresolved:
             state = UNKNOWN
             missing = "unresolved: " + "; ".join(
@@ -156,9 +104,30 @@ class SqlInjectionAnalyzer(Analyzer):
             state = IMPOSSIBLE
             missing = None
 
+        dedup_neutralizers = []
+        nseen = set()
+        for n in neutralizers:
+            key = (n.get("kind"), n.get("method"), n.get("file"), n.get("line"))
+            if key in nseen:
+                continue
+            nseen.add(key)
+            dedup_neutralizers.append(n)
+
+        if features:
+            sql_mode = "raw"
+        elif unknowns or relevant_unresolved:
+            sql_mode = "unknown"
+        elif dedup_neutralizers:
+            sql_mode = "parameterized_only"
+        else:
+            sql_mode = "no_sql"
+
         evidence = {
             "sql_sites": sites[:10],
+            "sql_features": features[:20],
+            "sql_mode": sql_mode,
+            "neutralizers": dedup_neutralizers[:20],
             "params": endpoint.get("params", []),
-            "has_input": has_input,
+            "has_input": bool(endpoint.get("params")),
         }
         return [Finding.make(endpoint, self.vulnclass, state, evidence, guards_seen, missing)]

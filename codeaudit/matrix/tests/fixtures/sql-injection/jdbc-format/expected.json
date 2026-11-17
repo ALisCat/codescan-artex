@@ -1,0 +1,7 @@
+{
+  "vulnclass": "sql-injection", "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/jdbc/query", "state": "possible",
+     "sql_mode": "raw"}
+  ]
+}

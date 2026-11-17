@@ -7,18 +7,18 @@
       "vuln_possible": 1,
       "vuln_missing": [],
       "safe_total": 21,
-      "safe_possible": 20,
+      "safe_possible": 17,
       "unknown_total": 1,
       "na_total": 1,
       "na_possible": 0,
-      "false_dispatch": 20,
+      "false_dispatch": 17,
       "vuln_recall": 1.0,
-      "safe_dispatch_rate": 0.9524,
+      "safe_dispatch_rate": 0.8095,
       "na_dispatch_rate": 0.0,
       "endpoints": 12,
       "findings": {
-        "possible": 28,
-        "impossible": 143,
+        "possible": 18,
+        "impossible": 153,
         "unknown": 33,
         "total": 204
       }
@@ -29,19 +29,19 @@
       "vuln_possible": 10,
       "vuln_missing": [],
       "safe_total": 12,
-      "safe_possible": 11,
+      "safe_possible": 8,
       "unknown_total": 1,
       "na_total": 1,
       "na_possible": 0,
-      "false_dispatch": 11,
+      "false_dispatch": 8,
       "vuln_recall": 1.0,
-      "safe_dispatch_rate": 0.9167,
+      "safe_dispatch_rate": 0.6667,
       "na_dispatch_rate": 0.0,
       "endpoints": 12,
       "findings": {
-        "possible": 27,
-        "impossible": 143,
-        "unknown": 34,
+        "possible": 18,
+        "impossible": 153,
+        "unknown": 33,
         "total": 204
       }
     },
@@ -50,8 +50,8 @@
       "note": "no label file; matrix summary only",
       "endpoints": 10,
       "findings": {
-        "possible": 22,
-        "impossible": 144,
+        "possible": 13,
+        "impossible": 153,
         "unknown": 4,
         "total": 170
       }

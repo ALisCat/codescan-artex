@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="com.example.UserMapper">
+  <select id="selectList" resultType="java.lang.String">
+    select name from users where id = #{id} order by ${sort}
+  </select>
+</mapper>
