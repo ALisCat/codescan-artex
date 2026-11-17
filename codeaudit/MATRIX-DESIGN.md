@@ -2113,3 +2113,24 @@ planner add_intent(spec)
 任务 17 的 16 条 planner 聚合专项保留为历史，不再重跑；
 104 个 pending 矩阵格需要重新 seed 或新建任务继续。
 任务完成判定仍应要求 applicable cells 全部有结论。
+
+### 36.5 矩阵完成门禁（P0）
+
+任务 17 在 104 个 applicable 格仍为 pending 时被 planner 标成 done。
+现在 `prove_goal` / `goal_met` 在“所有目标 met”后增加矩阵门禁：
+
+- 读取 `ca_cells` 中 `eligibility=applicable` 的 `pending/dispatched`；
+- `pending > 0`：自动调用 `seedCellIntents` 补派，返回错误并拒绝 `GoalMet`；
+- `dispatched > 0`：拒绝完成，等待 worker 回写；
+- 两者都为 0 才允许任务结束。
+
+对应实现：
+
+- `ToolSet.SetMatrixCompletion`
+- `Server.matrixPendingForTask`
+- `Server.matrixSeedForTask`
+
+测试：
+
+- `TestMatrixBlockReason`
+- `TestMatrixIntentIsStructured`
