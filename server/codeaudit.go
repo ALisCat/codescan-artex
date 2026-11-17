@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
 )
 
@@ -441,7 +442,7 @@ func matrixPriority(p int) int {
 //
 // 目的：矩阵本身已枚举方向，planner 只应补"矩阵没覆盖的缺口"，不应再派
 // "汇总/盘点/落盘"这类元任务。
-func (s *Server) matrixGuardForTask(t *Task) (bool, string) {
+func (s *Server) matrixGuardForTask(t *Task, spec agent.IntentSpec) (bool, string) {
 	if s.m == nil || s.m.PG() == nil || t == nil {
 		return true, ""
 	}
@@ -453,20 +454,161 @@ func (s *Server) matrixGuardForTask(t *Task) (bool, string) {
 	if err != nil || n == 0 {
 		return true, "" // 非矩阵任务
 	}
-	limit := 10
-	if v, ok, _ := s.m.PG().GetSetting("matrix_planner_extra_limit"); ok {
-		if k, err := strconv.Atoi(v); err == nil && k >= 0 {
-			limit = k
+	structured := len(spec.CellKeys) > 0 || len(spec.Targets) > 0
+	if !structured && spec.Scope != "repo" {
+		return false, "矩阵任务补派必须提供 cell_keys 或 targets（或 scope=repo + files/endpoints）。" +
+			"不允许再生成只有 summary 的聚合专项；请直接指向具体矩阵格/接口类型。"
+	}
+	// 结构化接口补派不占 extra 额度：worker 反馈回来的新事实可以继续派。
+	// repo 级补派仍受额度限制，避免 planner 用 repo scope 绕过矩阵。
+	if spec.Scope == "repo" {
+		limit := 10
+		if v, ok, _ := s.m.PG().GetSetting("matrix_planner_extra_limit"); ok {
+			if k, err := strconv.Atoi(v); err == nil && k >= 0 {
+				limit = k
+			}
+		}
+		used, err := t.Store.CountIntentsByOrigin("planner")
+		if err != nil {
+			return true, ""
+		}
+		if used >= limit {
+			return false, "矩阵任务 repo 级补派额度已用完（" + strconv.Itoa(used) + "/" + strconv.Itoa(limit) + "）"
 		}
 	}
-	used, err := t.Store.CountIntentsByOrigin("planner")
-	if err != nil {
-		return true, ""
-	}
-	if used >= limit {
-		return false, "矩阵任务的本轮补派额度已用完（" + strconv.Itoa(used) + "/" + strconv.Itoa(limit) +
-			"）。矩阵已经枚举了方向，请优先把已有格子跑完；确需补派时提高 settings.matrix_planner_extra_limit。" +
-			"另：不要生成汇总/盘点/落盘/对照表这类元任务。"
-	}
 	return true, ""
+}
+
+// resolveMatrixIntent 把 planner 的 cell_keys/targets 解析成矩阵 cases/hints。
+func (s *Server) resolveMatrixIntent(t *Task, spec agent.IntentSpec) (*agent.ResolvedIntent, error) {
+	if s.m == nil || s.m.PG() == nil || t == nil {
+		return nil, nil
+	}
+	taskID, err := parseTaskID(t.ID)
+	if err != nil {
+		return nil, err
+	}
+	n, err := s.m.PG().Cells().Count(taskID)
+	if err != nil || n == 0 {
+		return nil, nil // 非矩阵任务：保持自然语言意图
+	}
+	if spec.Scope == "repo" {
+		if len(spec.Files) == 0 && len(spec.Endpoints) == 0 {
+			return nil, fmt.Errorf("repo 补派必须提供 files 或 endpoints")
+		}
+		payload := map[string]any{
+			"summary": spec.Summary, "scope": "repo",
+			"files": spec.Files, "endpoints": spec.Endpoints,
+		}
+		return &agent.ResolvedIntent{Payload: payload}, nil
+	}
+	keys := append([]string{}, spec.CellKeys...)
+	for _, tgt := range spec.Targets {
+		key := strings.TrimSpace(tgt.URL) + ":" + strings.TrimSpace(tgt.VulnClass)
+		if strings.TrimSpace(tgt.URL) == "" || strings.TrimSpace(tgt.VulnClass) == "" {
+			continue
+		}
+		c, _ := s.m.PG().Cells().Get(taskID, key)
+		if c == nil {
+			sites := []map[string]any{}
+			for _, f := range spec.Files {
+				sites = append(sites, map[string]any{"kind": "planner_file", "file": f, "line": 1, "api": "planner target"})
+			}
+			for _, ep := range spec.Endpoints {
+				sites = append(sites, map[string]any{"kind": "planner_endpoint", "api": ep})
+			}
+			hints, _ := json.Marshal(map[string]any{
+				"flow": []any{}, "sites": sites, "sinks": sites,
+				"planner_files": spec.Files, "planner_endpoints": spec.Endpoints,
+			})
+			dir := "审计 " + tgt.Method + " " + tgt.URL + " 的「" + cellVulnCN[tgt.VulnClass] + "」风险（planner 补派）"
+			_, err := s.m.PG().Cells().Import(taskID, []db.CellInput{{
+				CellKey: key, Direction: dir, VulnClass: tgt.VulnClass,
+				Priority: 14, Bucket: "P1", Checklist: cellChecklistCN[tgt.VulnClass],
+				Hints: hints, HintsNote: "planner 结构化补派；hints 来自 planner 提供范围。",
+				Eligibility: "applicable", Endpoint: struct {
+					Method  string `json:"method"`
+					URL     string `json:"url"`
+					AssetID int64  `json:"asset_id"`
+				}{Method: tgt.Method, URL: tgt.URL},
+			}})
+			if err != nil {
+				return nil, err
+			}
+			c, _ = s.m.PG().Cells().Get(taskID, key)
+		}
+		if c != nil {
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("矩阵补派缺少有效 cell_keys 或 targets")
+	}
+	seen := map[string]bool{}
+	uniq := keys[:0]
+	for _, k := range keys {
+		if !seen[k] {
+			seen[k] = true
+			uniq = append(uniq, k)
+		}
+	}
+	keys = uniq
+	cells := make([]db.Cell, 0, len(keys))
+	for _, key := range keys {
+		c, err := s.m.PG().Cells().Get(taskID, key)
+		if err != nil {
+			return nil, err
+		}
+		if c == nil {
+			return nil, fmt.Errorf("矩阵格不存在：%s", key)
+		}
+		if c.Status == "dispatched" {
+			return nil, fmt.Errorf("矩阵格 %s 已有运行中的 intent", key)
+		}
+		if (c.Status == "na" || c.Status == "unverified" || c.Status == "clean" || c.Status == "confirmed") && len(spec.ParentIDs) == 0 {
+			return nil, fmt.Errorf("矩阵格 %s 已有结论/不可用状态，补派需要 parent_ids 指向新的 fact/finding", key)
+		}
+		cells = append(cells, *c)
+	}
+	cases := make([]map[string]any, 0, len(cells))
+	note := ""
+	for _, c := range cells {
+		var checklist []string
+		var hints map[string]any
+		_ = json.Unmarshal(c.Checklist, &checklist)
+		_ = json.Unmarshal(c.Hints, &hints)
+		if note == "" {
+			note = c.HintsNote
+		}
+		cases = append(cases, map[string]any{
+			"cell_key": c.CellKey, "vulnclass": c.VulnClass,
+			"checklist": checklist, "hints": hints,
+		})
+	}
+	if note == "" {
+		note = "planner 结构化补派；请按 cell hints 审计。"
+	}
+	summary := strings.TrimSpace(spec.Summary)
+	if summary == "" {
+		summary = "planner 补派：" + strings.Join(keys, "、")
+	}
+	payload := map[string]any{
+		"summary": summary, "cell_keys": keys, "cases": cases, "hints_note": note,
+		"output_contract": map[string]any{
+			"verdicts":            []string{"confirmed", "clean", "needs_more"},
+			"per_cell":            "cases 里每个 cell_key 都要单独 submit_cell_verdict",
+			"confirmed_requires":  "文件:行号 + 代码片段 + 触发条件；同一处代码只报一条 finding",
+			"clean_requires":      "正向证据：哪一行做了什么校验",
+			"needs_more_requires": "说明缺什么证据",
+		},
+	}
+	bind := func(intentID int64) error {
+		for _, c := range cells {
+			if _, err := s.m.PG().Cells().MarkManual(taskID, c.CellKey, intentID, c.Direction, "planner structured dispatch"); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return &agent.ResolvedIntent{Payload: payload, Bind: bind}, nil
 }

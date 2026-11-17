@@ -586,7 +586,8 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	pl.SetMaxTokens(plannerRuntime.maxTokens)
 	pl.SetNoaEnabled(s.m.NoaCompactionEnabled) // 实验功能:noa 上下文压缩(平台级开关,每 run 读)
 	pl.SetKillWork(s.engine.KillWork)
-	pl.SetMatrixGuard(func() (bool, string) { return s.matrixGuardForTask(t) }) // 二开：矩阵补派额度
+	pl.SetMatrixGuard(func(spec agent.IntentSpec) (bool, string) { return s.matrixGuardForTask(t, spec) })                           // 二开：矩阵补派守卫
+	pl.SetMatrixIntentResolver(func(spec agent.IntentSpec) (*agent.ResolvedIntent, error) { return s.resolveMatrixIntent(t, spec) }) // 二开：结构化补派
 	pl.SetSteerWork(s.engine.SteerWork)
 	pl.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
 	pl.SetWebSearch(s.webSearchFor("planner"))

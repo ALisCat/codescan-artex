@@ -89,7 +89,9 @@ type ToolSet struct {
 	// Wired for workers; nil elsewhere → falls back to notify (bare wake).
 	notifyFinding func(intentID int64, summary string)
 	// 二开：矩阵任务的补派守卫。返回 (allowed, reason)，nil = 不限制。
-	matrixGuard func() (bool, string)
+	matrixGuard func(IntentSpec) (bool, string)
+	// 二开：矩阵任务的结构化 intent 解析器；把 cell_keys/targets 注入 cases/hints。
+	matrixIntentResolver func(IntentSpec) (*ResolvedIntent, error)
 	// 二开：矩阵结论回写。nil = 当前任务没有矩阵上下文（工具报不可用）。
 	cellVerdict func(cellKey, verdict, reason string, evidence json.RawMessage) error
 	// resumeTask, if set, revives the task after a graph change that should make a
@@ -134,7 +136,12 @@ func (t *ToolSet) SetNotify(fn func()) { t.notify = fn }
 func (t *ToolSet) SetNotifyFinding(fn func(int64, string)) { t.notifyFinding = fn }
 
 // SetMatrixGuard 注入矩阵补派守卫（额度/范围限制）。
-func (t *ToolSet) SetMatrixGuard(fn func() (bool, string)) { t.matrixGuard = fn }
+func (t *ToolSet) SetMatrixGuard(fn func(IntentSpec) (bool, string)) { t.matrixGuard = fn }
+
+// SetMatrixIntentResolver 注入矩阵结构化 intent 解析器。
+func (t *ToolSet) SetMatrixIntentResolver(fn func(IntentSpec) (*ResolvedIntent, error)) {
+	t.matrixIntentResolver = fn
+}
 
 // SetCellVerdict 注入矩阵结论回写回调（server 侧用 task_id 绑定 ca_cells）。
 func (t *ToolSet) SetCellVerdict(fn func(cellKey, verdict, reason string, evidence json.RawMessage) error) {
@@ -1029,13 +1036,34 @@ func (t *ToolSet) nodeDetail() actool.CoreTool {
 
 // --- planner write tools ---
 
-// intentItem 是 add_intent 批量/单条的一条探索方向。
-type intentItem struct {
+// IntentTarget 是 planner 补派时指定的接口/类型目标。
+type IntentTarget struct {
+	Method    string `json:"method"`
+	URL       string `json:"url"`
+	VulnClass string `json:"vulnclass"`
+}
+
+// IntentSpec 是 add_intent 的结构化意图描述。
+type IntentSpec struct {
 	Summary   string            `json:"summary"`
 	AssetIDs  []json.RawMessage `json:"asset_ids"`
 	ParentIDs []json.RawMessage `json:"parent_ids"`
 	Priority  int               `json:"priority"`
+	CellKeys  []string          `json:"cell_keys"`
+	Targets   []IntentTarget    `json:"targets"`
+	Scope     string            `json:"scope"`
+	Files     []string          `json:"files"`
+	Endpoints []string          `json:"endpoints"`
 }
+
+// ResolvedIntent 是服务端把结构化目标解析成矩阵 payload 的结果。
+type ResolvedIntent struct {
+	Payload map[string]any
+	Bind    func(intentID int64) error
+}
+
+// intentItem 是 add_intent 批量/单条的一条探索方向（兼容旧调用）。
+type intentItem = IntentSpec
 
 // addOneIntent 创建一条意图节点并连上游血缘，返回 id。
 // 约束：意图只能锚在已确认知识上——每个 parent_id 必须是已存在的 fact/finding
@@ -1046,7 +1074,7 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 		return 0, fmt.Errorf("summary 不能为空")
 	}
 	if t.matrixGuard != nil {
-		if ok, reason := t.matrixGuard(); !ok {
+		if ok, reason := t.matrixGuard(it); !ok {
 			return 0, fmt.Errorf("%s", reason)
 		}
 	}
@@ -1085,6 +1113,17 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 	if len(anchors) > 0 {
 		payload["asset_ids"] = anchors
 	}
+	var resolved *ResolvedIntent
+	if t.matrixIntentResolver != nil {
+		var rerr error
+		resolved, rerr = t.matrixIntentResolver(it)
+		if rerr != nil {
+			return 0, rerr
+		}
+		if resolved != nil && resolved.Payload != nil {
+			payload = resolved.Payload
+		}
+	}
 	id, err := t.ts.AddIntent(payload, priority, anchors, "planner")
 	if err != nil {
 		return 0, err
@@ -1102,6 +1141,11 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 			_ = t.ts.Link(origin, db.RelDerivedFrom, id)
 		}
 	}
+	if resolved != nil && resolved.Bind != nil {
+		if err := resolved.Bind(id); err != nil {
+			return 0, err
+		}
+	}
 	return id, nil
 }
 
@@ -1114,6 +1158,11 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 			"asset_ids":  map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "本方向要测试/攻击的【目标资产 id】（**尽量传**，0/1/多个；是 list_assets 返回的资产 id，不是探索节点 id）：这条探索方向针对哪些资产（站点/接口/参数/主机等）。只要方向围绕某些具体资产就务必传上——它是「这条探索打哪些目标」的结构化标记，用于覆盖去重、把意图连入资产链路。仅当纯全局侦察、确实没有具体目标资产时才留空。"},
 			"parent_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "上游锚点 id（可选，0/1/多个）：本方向由哪些【已确认的事实(fact)/发现(finding)】综合得出。**只能填已存在的 fact/finding 节点 id,不能填意图/目标/提示**——意图必须锚在已确认知识上,发现驱动而非凭空规划。多个事实共同产生一个新意图就传多个;顶层全新侦察方向请留空（会自动挂到任务起点 origin fact）。"},
 			"priority":   intp("优先级 0-10，默认5"),
+			"cell_keys":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "矩阵任务结构化补派：已有 ca_cells 的 cell_key，例如 /api/x:authz。服务端会自动注入 cases/hints/flow。"},
+			"targets":    map[string]any{"type": "array", "description": "矩阵任务结构化补派：method+url+vulnclass；不存在时会创建新矩阵格。", "items": map[string]any{"type": "object"}},
+			"scope":      str("矩阵任务补派范围：endpoint 或 repo。repo 需配合 files/endpoints。"),
+			"files":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "补派涉及的文件（尤其 repo scope / 新接口）。"},
+			"endpoints":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "补派涉及的接口路径。"},
 		}),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {

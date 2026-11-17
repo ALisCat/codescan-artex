@@ -2062,3 +2062,54 @@ authn possible: 0
 - JWT 硬编码密钥归入 `secrets`，不混在 authn；
 - 支付回调的 business-logic 子类型；
 - 带 HMAC 的 fixture，验证“有签名”时不再报 gap。
+
+## 36. 矩阵补派方案 B：结构化 intent
+
+### 36.1 问题
+
+任务 17 中 planner 生成了 16 条只有 summary 的聚合专项（如“鉴权与越权链路专项”），
+`add_intent` 的 schema 只有 summary/asset_ids/parent_ids/priority，无法携带
+`cases/hints/flow`。worker 只能走 `plannerIntentPrelude`，没有图导航，最终 15 条 exhausted。
+
+### 36.2 结构化字段
+
+`add_intent` 新增：
+
+```json
+{
+  "cell_keys": ["/api/x:authz"],
+  "targets": [{"method":"POST","url":"/api/x","vulnclass":"authz"}],
+  "scope": "endpoint|repo",
+  "files": ["src/...java"],
+  "endpoints": ["/api/x"]
+}
+```
+
+矩阵任务中：
+
+- `cell_keys` / `targets` / `scope=repo` 至少有一个；
+- 只有 summary 的意图直接拒绝；
+- `cell_keys` 查 `ca_cells`，服务端注入 `cases/hints`；
+- `targets` 不存在时创建新矩阵格；
+- `scope=repo` 必须带 files/endpoints；
+- 结构化接口补派不占 `matrix_planner_extra_limit`，保证 worker 反馈能继续派；
+- 仅 repo 级补派仍受 extra limit 限制。
+
+### 36.3 链路
+
+```text
+planner add_intent(spec)
+  → matrixGuardForTask(spec) 形状校验
+  → matrixIntentResolver(spec)
+      → ca_cells.Get / Import
+      → payload.cases[].hints
+  → AddIntent(payload)
+  → Bind(intentID): MarkManual(cell, intent)
+  → worker matrixIntentPrelude 正常渲染 flow/hints
+```
+
+### 36.4 存量问题
+
+任务 17 的 16 条 planner 聚合专项保留为历史，不再重跑；
+104 个 pending 矩阵格需要重新 seed 或新建任务继续。
+任务完成判定仍应要求 applicable cells 全部有结论。
