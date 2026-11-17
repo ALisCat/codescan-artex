@@ -108,6 +108,23 @@ type manualAuditBody struct {
 	Suggestion string `json:"suggestion"`
 }
 
+// manualAddBody 是 POST /api/codeaudit/tasks/{id}/cells/manual-add 的请求体。
+// 用于分析器没有覆盖的漏洞类型：按接口创建一个新格子，再以人工意图派发。
+type manualAddBody struct {
+	Method     string `json:"method"`
+	URL        string `json:"url"`
+	VulnClass  string `json:"vulnclass"`
+	Suggestion string `json:"suggestion"`
+}
+
+var errManualCellBusy = fmt.Errorf("格子状态已变化（可能刚被自动派发），请刷新后重试")
+
+var manualGenericChecklist = []string{
+	"请求参数是否进入危险操作",
+	"是否有服务端校验 / 编码 / 白名单",
+	"能否由低权限用户触发",
+}
+
 // caManualAudit 人工对某个格子发起一次 worker 审计。
 // 即使矩阵判定为 not_applicable / hold / unverified，也允许人工强制派单；
 // 审计建议会随意图一起下发给 worker。
@@ -158,6 +175,152 @@ func (s *Server) caManualAudit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 409, "该格子已在审计队列中（intent 已存在）")
 		return
 	}
+	s.enrichCellHints(taskID, c)
+	id, err := s.startManualAudit(t, taskID, c, suggestion, c.Status)
+	if err != nil {
+		if err == errManualCellBusy {
+			writeErr(w, 409, err.Error())
+		} else {
+			writeErr(w, 500, err.Error())
+		}
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"ok":          true,
+		"intent_id":   id,
+		"task_status": life.Status,
+		"paused":      life.Paused,
+		"queued":      life.Queued,
+	})
+}
+
+// caManualAddCell 人工为一个接口添加分析器未覆盖的漏洞类型，并立即派发。
+// 新格子的 hints 只复制同一接口的 flow/params，不复制其他类型的 sink 或结论。
+func (s *Server) caManualAddCell(w http.ResponseWriter, r *http.Request) {
+	if currentUser(r) == nil {
+		writeErr(w, 401, "未授权")
+		return
+	}
+	t, ok := s.m.Task(r.PathValue("id"))
+	if !ok {
+		writeErr(w, 404, "task not found")
+		return
+	}
+	var body manualAddBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, 400, "bad json: "+err.Error())
+		return
+	}
+	method := strings.ToUpper(strings.TrimSpace(body.Method))
+	url := strings.TrimSpace(body.URL)
+	vulnclass := strings.TrimSpace(body.VulnClass)
+	suggestion := strings.TrimSpace(body.Suggestion)
+	if method == "" || url == "" {
+		writeErr(w, 400, "method / url 不能为空")
+		return
+	}
+	if vulnclass == "" {
+		writeErr(w, 400, "漏洞类型不能为空")
+		return
+	}
+	if len([]rune(vulnclass)) > 80 {
+		writeErr(w, 400, "漏洞类型不能超过 80 字")
+		return
+	}
+	if len([]rune(suggestion)) > 2000 {
+		writeErr(w, 400, "审计建议不能超过 2000 字")
+		return
+	}
+	life := t.lifecycleSnapshot()
+	if isTerminalStatus(life.Status) {
+		writeErr(w, 409, "任务已结束，请重跑任务或新建任务后再发起审计")
+		return
+	}
+	taskID, err := parseTaskID(t.ID)
+	if err != nil {
+		writeErr(w, 400, "task id 无效")
+		return
+	}
+	cells, err := s.m.PG().Cells().List(taskID, "")
+	if err != nil {
+		writeErr(w, 500, "读取格子失败: "+err.Error())
+		return
+	}
+	cellKey := url + ":" + vulnclass
+	c, _ := s.m.PG().Cells().Get(taskID, cellKey)
+	added := false
+	var flowCount int
+	if c == nil {
+		sibling := findEndpointCell(cells, method, url)
+		if sibling == nil {
+			writeErr(w, 400, "该接口不在矩阵中，无法携带图信息；请先导入矩阵")
+			return
+		}
+		flowCount = hintFlowCount(sibling.Hints)
+		checklist := cellChecklistCN[vulnclass]
+		if len(checklist) == 0 {
+			checklist = manualGenericChecklist
+		}
+		hints := manualCellHints(sibling)
+		_, err = s.m.PG().Cells().Import(taskID, []db.CellInput{{
+			CellKey:     cellKey,
+			Direction:   fmt.Sprintf("人工添加：审计 %s %s 的「%s」风险", method, url, cellDisplayName(vulnclass)),
+			VulnClass:   vulnclass,
+			Priority:    14,
+			Bucket:      "P1",
+			Checklist:   checklist,
+			Hints:       hints,
+			HintsNote:   "人工添加类型：flow 只作为入口参考，不是安全结论；允许从 flow 扩展阅读。",
+			Eligibility: "applicable",
+			Reason:      "人工添加漏洞类型（分析器未覆盖）",
+			Trace:       json.RawMessage(`[]`),
+			Endpoint: struct {
+				Method  string `json:"method"`
+				URL     string `json:"url"`
+				AssetID int64  `json:"asset_id"`
+			}{Method: method, URL: url},
+		}})
+		if err != nil {
+			writeErr(w, 500, "创建格子失败: "+err.Error())
+			return
+		}
+		c, err = s.m.PG().Cells().Get(taskID, cellKey)
+		if err != nil || c == nil {
+			writeErr(w, 500, "创建格子后读取失败")
+			return
+		}
+		added = true
+	} else {
+		s.enrichCellHints(taskID, c)
+		flowCount = hintFlowCount(c.Hints)
+	}
+	if c.Status == "dispatched" {
+		writeErr(w, 409, "该格子已在审计队列中（intent 已存在）")
+		return
+	}
+	id, err := s.startManualAudit(t, taskID, c, suggestion, "manual_added")
+	if err != nil {
+		if err == errManualCellBusy {
+			writeErr(w, 409, err.Error())
+		} else {
+			writeErr(w, 500, err.Error())
+		}
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"ok":          true,
+		"intent_id":   id,
+		"cell_key":    cellKey,
+		"added":       added,
+		"flow_count":  flowCount,
+		"task_status": life.Status,
+		"paused":      life.Paused,
+		"queued":      life.Queued,
+	})
+}
+
+// startManualAudit 创建一个 manual intent 并绑定到格子。
+func (s *Server) startManualAudit(t *Task, taskID int64, c *db.Cell, suggestion, analyzerState string) (int64, error) {
 	var checklist []string
 	if len(c.Checklist) > 0 {
 		_ = json.Unmarshal(c.Checklist, &checklist)
@@ -175,10 +338,7 @@ func (s *Server) caManualAudit(w http.ResponseWriter, r *http.Request) {
 	if hints == nil {
 		hints = map[string]any{}
 	}
-	cn := cellVulnCN[c.VulnClass]
-	if cn == "" {
-		cn = c.VulnClass
-	}
+	cn := cellDisplayName(c.VulnClass)
 	cases := []map[string]any{{
 		"cell_key":  c.CellKey,
 		"vulnclass": c.VulnClass,
@@ -190,10 +350,10 @@ func (s *Server) caManualAudit(w http.ResponseWriter, r *http.Request) {
 		"cell_keys":      []string{c.CellKey},
 		"cases":          cases,
 		"manual":         true,
-		"analyzer_state": c.Status,
+		"analyzer_state": analyzerState,
 		"suggestion":     suggestion,
-		"hints_note": "人工发起：矩阵原判定可能是不适用 / 有守卫 / 未验证；请优先按人工建议审计这一格，" +
-			"但仍以源码证据为准，结论只能是 confirmed / clean / needs_more。",
+		"hints_note": "人工发起：原判定可能是「不适用 / 有守卫 / 未验证」，也可能是分析器未覆盖的新类型；" +
+			"请优先按人工建议审计这一格，但仍以源码证据为准，结论只能是 confirmed / clean / needs_more。",
 		"output_contract": map[string]any{
 			"verdicts":            []string{"confirmed", "clean", "needs_more"},
 			"per_cell":            "cases 里每个 cell_key 都要单独 submit_cell_verdict",
@@ -205,34 +365,123 @@ func (s *Server) caManualAudit(w http.ResponseWriter, r *http.Request) {
 	es := s.m.PG().Exploration(t.ExpID)
 	id, err := es.AddIntent(payload, 10, nil, "manual")
 	if err != nil {
-		writeErr(w, 500, "创建意图失败: "+err.Error())
-		return
+		return 0, fmt.Errorf("创建意图失败: %w", err)
 	}
 	if originID, _ := t.Store.OriginFactID(); originID > 0 {
 		_ = t.Store.Link(originID, db.RelDerivedFrom, id)
 	}
 	direction := fmt.Sprintf("人工指定：审计 %s %s 的「%s」风险", c.Method, c.EndpointURL, cn)
 	reason := "人工发起审计"
-	if strings.TrimSpace(c.Reason) != "" {
-		reason += "（原判定：" + c.Reason + "）"
+	if old := strings.TrimSpace(c.Reason); old != "" && !strings.HasPrefix(old, "人工添加漏洞类型") {
+		reason += "（原判定：" + old + "）"
 	}
 	n, err := s.m.PG().Cells().MarkManual(taskID, c.CellKey, id, direction, reason)
 	if err != nil {
-		writeErr(w, 500, "绑定格子失败: "+err.Error())
-		return
+		return 0, fmt.Errorf("绑定格子失败: %w", err)
 	}
 	if n == 0 {
-		writeErr(w, 409, "格子状态已变化（可能刚被自动派发），请刷新后重试")
-		return
+		return 0, errManualCellBusy
 	}
 	t.Notify()
-	writeJSON(w, 200, map[string]any{
-		"ok":          true,
-		"intent_id":   id,
-		"task_status": life.Status,
-		"paused":      life.Paused,
-		"queued":      life.Queued,
-	})
+	return id, nil
+}
+
+// enrichCellHints 给旧导入的格子补上同一接口的 flow/params。
+// 只补缺失字段，不改 status、eligibility 或已有结论。
+func (s *Server) enrichCellHints(taskID int64, c *db.Cell) {
+	if c == nil || hintFlowCount(c.Hints) > 0 {
+		return
+	}
+	cells, err := s.m.PG().Cells().List(taskID, "")
+	if err != nil {
+		return
+	}
+	sibling := findEndpointCell(cells, c.Method, c.EndpointURL)
+	if sibling == nil || hintFlowCount(sibling.Hints) == 0 {
+		return
+	}
+	merged := mergeEndpointHints(c.Hints, sibling)
+	if err := s.m.PG().Cells().UpdateHints(taskID, c.CellKey, merged); err == nil {
+		c.Hints = merged
+	}
+}
+
+// mergeEndpointHints 只在 flow/params 缺失时补值，保留格子原有判定线索。
+func mergeEndpointHints(dst json.RawMessage, sibling *db.Cell) json.RawMessage {
+	out := map[string]any{}
+	if len(dst) > 0 {
+		_ = json.Unmarshal(dst, &out)
+	}
+	src := map[string]any{}
+	if sibling != nil && len(sibling.Hints) > 0 {
+		_ = json.Unmarshal(sibling.Hints, &src)
+	}
+	for _, k := range []string{"flow", "params"} {
+		if v, ok := out[k]; ok {
+			if list, isList := v.([]any); !isList || len(list) > 0 {
+				continue
+			}
+		}
+		if v, ok := src[k]; ok {
+			out[k] = v
+		}
+	}
+	b, _ := json.Marshal(out)
+	return b
+}
+
+func cellDisplayName(vulnclass string) string {
+	if cn := cellVulnCN[vulnclass]; cn != "" {
+		return cn
+	}
+	return vulnclass
+}
+
+// findEndpointCell 找同一接口的任意格子，优先选 flow 最长的作为图信息源。
+func findEndpointCell(cells []db.Cell, method, url string) *db.Cell {
+	var best *db.Cell
+	bestN := -1
+	for i := range cells {
+		c := &cells[i]
+		if !strings.EqualFold(c.Method, method) || c.EndpointURL != url {
+			continue
+		}
+		if n := hintFlowCount(c.Hints); n > bestN {
+			best, bestN = c, n
+		}
+	}
+	return best
+}
+
+// manualCellHints 只复制接口级线索，避免把其他漏洞类型的 sink/结论带进新格子。
+func manualCellHints(sibling *db.Cell) json.RawMessage {
+	src := map[string]any{}
+	if sibling != nil && len(sibling.Hints) > 0 {
+		_ = json.Unmarshal(sibling.Hints, &src)
+	}
+	out := map[string]any{
+		"state":          "manual",
+		"analyzer_state": "manual",
+		"source":         "manual_added",
+	}
+	for _, k := range []string{"flow", "params"} {
+		if v, ok := src[k]; ok {
+			out[k] = v
+		}
+	}
+	b, _ := json.Marshal(out)
+	return b
+}
+
+func hintFlowCount(hints json.RawMessage) int {
+	if len(hints) == 0 {
+		return 0
+	}
+	var h struct {
+		Flow []any `json:"flow"`
+	}
+	_ = json.Unmarshal(hints, &h)
+	return len(h.Flow)
 }
 
 // caSeedCells 手动把剩余待办格子转成意图（分批调用，默认 50 条）。

@@ -723,6 +723,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/codeaudit/tasks/{id}/import", s.caImportCells)
 	mux.HandleFunc("POST /api/codeaudit/tasks/{id}/seed", s.caSeedCells)
 	mux.HandleFunc("POST /api/codeaudit/tasks/{id}/cells/audit", s.caManualAudit)
+	mux.HandleFunc("POST /api/codeaudit/tasks/{id}/cells/manual-add", s.caManualAddCell)
 	mux.HandleFunc("GET /api/codeaudit/tasks/{id}/cells", s.caListCells)
 	mux.HandleFunc("GET /api/codeaudit/tasks/{id}/stats", s.caCellStats)
 	mux.HandleFunc("POST /api/codeaudit/tasks/{id}/verdict", s.caSubmitVerdict)

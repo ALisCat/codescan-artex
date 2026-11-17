@@ -898,7 +898,18 @@ function EndpointSheet({
   onAudited?: () => void;
 }) {
   const [active, setActive] = React.useState<string | null>(null);
-  React.useEffect(() => setActive(null), [row?.key]);
+  const [addOpen, setAddOpen] = React.useState(false);
+  const [addVuln, setAddVuln] = React.useState("");
+  const [addText, setAddText] = React.useState("");
+  const [addBusy, setAddBusy] = React.useState(false);
+  const [addMsg, setAddMsg] = React.useState<{ ok: boolean; text: string } | null>(null);
+  React.useEffect(() => {
+    setActive(null);
+    setAddOpen(false);
+    setAddVuln("");
+    setAddText("");
+    setAddMsg(null);
+  }, [row?.key]);
   if (!row) return null;
   const cell = active ? row.cells.get(active) ?? null : null;
   const first = row.cells.values().next().value as CaCell | undefined;
@@ -939,6 +950,22 @@ function EndpointSheet({
         </SheetHeader>
 
         <div className="flex-1 space-y-3 overflow-auto p-4">
+          <ManualAddType
+            row={row}
+            vulns={vulns}
+            taskId={taskId}
+            open={addOpen}
+            onOpenChange={setAddOpen}
+            vuln={addVuln}
+            onVulnChange={setAddVuln}
+            text={addText}
+            onTextChange={setAddText}
+            busy={addBusy}
+            onBusyChange={setAddBusy}
+            msg={addMsg}
+            onMsgChange={setAddMsg}
+            onAudited={onAudited}
+          />
           {groups.length > 0 && (
             <div className="space-y-1 rounded border bg-muted/30 p-2 text-[11px]">
               {groups.map((g) => (
@@ -1002,6 +1029,130 @@ function EndpointSheet({
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+function ManualAddType({
+  row,
+  vulns,
+  taskId,
+  open,
+  onOpenChange,
+  vuln,
+  onVulnChange,
+  text,
+  onTextChange,
+  busy,
+  onBusyChange,
+  msg,
+  onMsgChange,
+  onAudited,
+}: {
+  row: RowData;
+  vulns: VulnDef[];
+  taskId: string;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  vuln: string;
+  onVulnChange: (v: string) => void;
+  text: string;
+  onTextChange: (v: string) => void;
+  busy: boolean;
+  onBusyChange: (v: boolean) => void;
+  msg: { ok: boolean; text: string } | null;
+  onMsgChange: (v: { ok: boolean; text: string } | null) => void;
+  onAudited?: () => void;
+}) {
+  const input = vuln.trim();
+  const hit = vulns.find((v) => v.key === input || v.label === input);
+  const resolved = hit?.key ?? input;
+  const exists = !!resolved && row.cells.has(resolved);
+
+  const submit = async () => {
+    if (busy || !resolved) return;
+    onBusyChange(true);
+    onMsgChange(null);
+    try {
+      const r = await api.caManualAddCell(taskId, row.method, row.url, resolved, text.trim());
+      const suffix = r.paused
+        ? "；任务当前暂停，恢复后执行"
+        : r.queued
+          ? "；任务排队中"
+          : "；worker 会尽快领取";
+      const carry = r.flow_count > 0 ? `，已带 ${r.flow_count} 个流程节点` : "，该接口暂无 flow 线索";
+      onMsgChange({
+        ok: true,
+        text: `${r.added ? "已新建该类型并派发" : "已补充审计现有格子"}（intent #${r.intent_id}）${carry}${suffix}`,
+      });
+      onOpenChange(false);
+      onVulnChange("");
+      onTextChange("");
+      onAudited?.();
+    } catch (e) {
+      onMsgChange({ ok: false, text: String((e as Error)?.message ?? e) });
+    } finally {
+      onBusyChange(false);
+    }
+  };
+
+  return (
+    <div className="rounded border p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[11px] font-medium">人工添加漏洞类型</div>
+          <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+            分析器没覆盖的偏门类型可以直接补。系统会带上该接口的 flow / file:line，
+            但不复制其他漏洞类型的 sink 或结论。
+          </p>
+        </div>
+        <Button size="sm" variant="outline" onClick={() => onOpenChange(!open)}>
+          {open ? "收起" : "添加类型"}
+        </Button>
+      </div>
+      {open && (
+        <div className="mt-3 space-y-2">
+          <input
+            list="ca-vuln-types"
+            value={vuln}
+            onChange={(e) => onVulnChange(e.target.value)}
+            placeholder="选择或输入类型，例如 authz / 越权 / 自定义类型"
+            className="w-full rounded border bg-background px-2 py-1.5 text-[11px]"
+          />
+          <datalist id="ca-vuln-types">
+            {vulns.map((v) => (
+              <option key={v.key} value={v.key} label={v.label} />
+            ))}
+          </datalist>
+          <textarea
+            value={text}
+            onChange={(e) => onTextChange(e.target.value)}
+            rows={3}
+            maxLength={2000}
+            placeholder="可选：说明你怀疑的偏门漏洞和入口，例如：关注 relayState 未校验导致 SSO 回调绕过……"
+            className="w-full resize-y rounded border bg-background p-2 text-[11px] leading-5"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={submit} disabled={busy || !resolved}>
+              {busy ? "提交中…" : "添加并审计"}
+            </Button>
+            <span className="text-[11px] text-muted-foreground">
+              {resolved ? `类型 key：${resolved}` : "先填写类型"}
+              {exists ? " · 已存在，将补充审计" : ""}
+            </span>
+          </div>
+          {msg && (
+            <p className={cn("text-[11px]", msg.ok ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")}>
+              {msg.text}
+            </p>
+          )}
+        </div>
+      )}
+      {!open && msg && (
+        <p className={cn("mt-2 text-[11px]", msg.ok ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")}>
+          {msg.text}
+        </p>
+      )}
+    </div>
   );
 }
 

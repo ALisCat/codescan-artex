@@ -962,6 +962,18 @@ export const api = {
       `/codeaudit/tasks/${taskId}/cells/audit`,
       { cell_key: cellKey, suggestion },
     ),
+  // 人工添加分析器未覆盖的漏洞类型：自动从同接口其他格子复制 flow/params，再派发。
+  caManualAddCell: (taskId: string, method: string, url: string, vulnclass: string, suggestion: string) =>
+    post<{
+      ok: boolean;
+      intent_id: number;
+      cell_key: string;
+      added: boolean;
+      flow_count: number;
+      task_status: string;
+      paused: boolean;
+      queued: boolean;
+    }>(`/codeaudit/tasks/${taskId}/cells/manual-add`, { method, url, vulnclass, suggestion }),
   tokenStats: (task?: string) =>
     get<{ workers: TokenUsage[]; sessions: SessionTokenUsage[]; total: TokenTotal }>(
       `/exploration/tokens${tq(task)}`,

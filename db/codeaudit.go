@@ -183,6 +183,17 @@ FROM ca_cells WHERE task_id=$1 AND cell_key=$2 LIMIT 1`, taskID, cellKey)
 	return &cells[0], nil
 }
 
+// UpdateHints 只更新线索，不改 status/verdict。用于人工审计前给旧格子补接口 flow。
+func (s *CellStore) UpdateHints(taskID int64, cellKey string, hints json.RawMessage) error {
+	if len(hints) == 0 || string(hints) == "null" {
+		return nil
+	}
+	_, err := s.db.Exec(`
+UPDATE ca_cells SET hints=$3::jsonb, updated_at=now()
+WHERE task_id=$1 AND cell_key=$2`, taskID, cellKey, hints)
+	return err
+}
+
 // MarkManual 把格子标记为人工发起的审计（status=dispatched，绑定新 intent）。
 // 原判定为 not_applicable 的格子改为 applicable，使其结论进入覆盖度统计。
 // 已 dispatched 的格子不覆盖（返回 rows=0，由调用方报冲突）。

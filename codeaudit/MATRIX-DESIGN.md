@@ -2134,3 +2134,49 @@ planner add_intent(spec)
 
 - `TestMatrixBlockReason`
 - `TestMatrixIntentIsStructured`
+
+## 37. 人工添加漏洞类型（矩阵右侧抽屉）
+
+### 37.1 场景
+
+分析器覆盖 21 类，但经验丰富的审计员可能一眼看出偏门问题（例如 SSO 回调
+`relayState` 未校验、业务状态机绕过）。这类类型可能根本没有对应矩阵格，
+不能走“人工强制审计已有格子”的入口。
+
+### 37.2 行为
+
+右侧接口抽屉新增“人工添加漏洞类型”：
+
+- 可从已知类型选择，也可直接输入自定义类型；
+- 服务端按 `(task, url, vulnclass)` 创建新格（已存在则复用）；
+- 新格只复制同一接口的 `flow / params`，**不复制其他类型的 sink、authz_model、
+  guards 或 N/A 结论**；
+- 创建后立即生成 manual intent，worker 的 `matrixIntentPrelude` 会按人工审计模式
+  渲染入口流程；
+- 人工模式允许从 flow 扩展（额外 Read ≤8 个文件，Grep/Glob ≤4 次），避免把
+  “分析器没覆盖”的入口又锁死在原 flow 里。
+
+### 37.3 接口
+
+```text
+POST /api/codeaudit/tasks/{id}/cells/manual-add
+{
+  "method": "POST",
+  "url": "/api/sso/callback",
+  "vulnclass": "sso-callback",
+  "suggestion": "关注 relayState 是否绑定会话"
+}
+```
+
+返回 `intent_id / cell_key / added / flow_count`。
+
+### 37.4 旧格子补图
+
+对旧任务中 `hints.flow` 为空的格子，人工审计前会从同接口其他格子补齐
+`flow/params`，只更新 hints，不改 status/eligibility/既有结论。
+
+测试：
+
+- `TestManualCellHintsOnlyCopiesEndpointFlow`
+- `TestFindEndpointCellPrefersLongestFlow`
+- `TestMergeEndpointHintsKeepsExistingFields`
