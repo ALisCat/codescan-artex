@@ -98,6 +98,8 @@ class AuthnAnalyzer(Analyzer):
         missing = None
         if gaps:
             missing = "缺失认证控制: " + ", ".join(gaps)
+            if not has_input:
+                missing += "；回调入口没有可见请求参数/请求体"
         elif not has_input:
             missing = "回调入口没有可见请求参数/请求体"
 

@@ -1,0 +1,17 @@
+{
+  "vulnclass": "authn",
+  "scope": "endpoint",
+  "endpoints": [
+    {
+      "method": "GET",
+      "url": "/api/notify/callback",
+      "state": "unknown",
+      "subtype": "callback-no-signature",
+      "gaps": [
+        "signature",
+        "replay_protection"
+      ],
+      "missing_contains": "没有可见请求参数"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "vulnclass": "authn",
+  "scope": "endpoint",
+  "endpoints": [
+    {
+      "method": "POST",
+      "url": "/api/token/refresh",
+      "state": "possible",
+      "subtype": "token-verification-missing",
+      "gaps": ["authentication"],
+      "cwe": ["CWE-306"]
+    }
+  ]
+}

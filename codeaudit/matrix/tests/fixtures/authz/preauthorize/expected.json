@@ -1,0 +1,12 @@
+{
+  "vulnclass": "authz",
+  "scope": "endpoint",
+  "endpoints": [
+    {
+      "method": "GET",
+      "url": "/api/admin/orders/{id}",
+      "state": "possible",
+      "gaps": ["ownership"]
+    }
+  ]
+}

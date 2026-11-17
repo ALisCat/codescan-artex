@@ -1,0 +1,14 @@
+{
+  "vulnclass": "authn",
+  "scope": "endpoint",
+  "endpoints": [
+    {
+      "method": "POST",
+      "url": "/api/pay/notify",
+      "state": "possible",
+      "subtype": "callback-no-signature",
+      "gaps": ["signature", "replay_protection"],
+      "cwe": ["CWE-306", "CWE-347", "CWE-294"]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "vulnclass": "authz",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "POST", "url": "/api/auth/login", "state": "impossible"}
+  ]
+}

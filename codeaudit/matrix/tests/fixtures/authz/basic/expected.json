@@ -1,0 +1,15 @@
+{
+  "vulnclass": "authz",
+  "scope": "endpoint",
+  "endpoints": [
+    {
+      "method": "GET",
+      "url": "/api/orders/{id}",
+      "state": "possible",
+      "gaps": ["authentication", "ownership"],
+      "sites": [
+        {"file": "OrderService.java"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "vulnclass": "authz",
+  "scope": "endpoint",
+  "endpoints": [
+    {
+      "method": "GET",
+      "url": "/api/orders/{id}",
+      "state": "unknown",
+      "missing_contains": "unresolved"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "vulnclass": "authn",
+  "scope": "endpoint",
+  "endpoints": [
+    {
+      "method": "POST",
+      "url": "/api/pay/notify",
+      "state": "possible",
+      "subtype": "authn-controls-present",
+      "gaps": []
+    }
+  ]
+}

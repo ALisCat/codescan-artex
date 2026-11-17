@@ -1,0 +1,7 @@
+{
+  "vulnclass": "authn",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/orders/{id}", "state": "impossible", "subtype": "not-authn"}
+  ]
+}
