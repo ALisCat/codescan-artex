@@ -529,6 +529,7 @@ codeaudit/
 关键文档：
 
 - [`codeaudit/PLAN.md`](codeaudit/PLAN.md)：从 ARTEX 到代码审计平台的总体计划
+- [`codeaudit/DEVELOPMENT-PLAN.md`](codeaudit/DEVELOPMENT-PLAN.md)：当前待开发项、优先级和验收标准
 - [`codeaudit/MATRIX-DESIGN.md`](codeaudit/MATRIX-DESIGN.md)：矩阵状态机、分析器、守卫、补派、完成门禁
 - [`codeaudit/matrix/README.md`](codeaudit/matrix/README.md)：图、分析器、guards、authn 契约
 - [`codeaudit/matrix/OPEN-ISSUES.md`](codeaudit/matrix/OPEN-ISSUES.md)：已知缺口和优先级
