@@ -5,6 +5,7 @@
 **接口 × 漏洞类型矩阵驱动的 AI 静态代码审计平台**
 
 Java / Spring / MyBatis 优先 · 只读源码 · 结论可追溯
+三开于ARTEX，二开于CodeScan
 
 </div>
 
