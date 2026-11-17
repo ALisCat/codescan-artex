@@ -70,7 +70,7 @@ export interface NavGroup {
   items: NavMainItem[];
 }
 
-// SCA Audit 是代码审计平台：对外发请求/抓包/执行命令相关的 agent 工具已从工具层删除，
+// CodeScan 是代码审计平台：对外发请求/抓包/执行命令相关的 agent 工具已从工具层删除，
 // 但对应的管理页仍保留（流量、工具调用记录、工具目录、MCP、拦截规则/审批/资产拦截），
 // 仅管理员可见，用于查看历史记录与维护配置。
 export const sidebarItems: NavGroup[] = [

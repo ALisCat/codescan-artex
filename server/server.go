@@ -1021,7 +1021,7 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	// service 是给界面/日志看的展示名（内部标识符仍叫 artex）。
-	writeJSON(w, 200, map[string]any{"ok": true, "service": "SCA Audit", "version": BuildVersion})
+	writeJSON(w, 200, map[string]any{"ok": true, "service": "CodeScan", "version": BuildVersion})
 }
 
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {

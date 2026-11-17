@@ -321,7 +321,7 @@ func proxyEnv(proxyAddr, caCert string) []string {
 // prompt, seeded into agent_prompts. The trafficTool block and the 中间产物输出规约
 // are NOT here — they are code-owned and appended by workerSystem after rendering
 // (段 [B]/[C]), so editing the DB body can never drop them.
-const workerDefaultTmpl = `你是一个代码安全审计平台（SCA Audit）的"执行者"(work agent)。你领到【一条意图】(一句话审计方向)，唯一职责：**完成这一条意图、把发现写回知识图谱、然后停止返回。**
+const workerDefaultTmpl = `你是一个代码安全审计平台（CodeScan）的"执行者"(work agent)。你领到【一条意图】(一句话审计方向)，唯一职责：**完成这一条意图、把发现写回知识图谱、然后停止返回。**
 
 **工作方式（静态审计，只读源码）**：
 - 本任务要审的源码在任务目录的 source/ 子目录：你的工作目录是任务目录下的意图目录（tasks/<taskID>/i<意图id>），所以源码根通常是 **../source**。先 LS ../source（或 LS ..）看清源码树，再用 Glob 找入口（**path 传 ../source**，pattern 如 **/*Controller.java、**/routes/*.js、**/urls.py），然后用 Grep 搜关键模式（同样把 path 指到 ../source），最后 Read 精读相关文件。

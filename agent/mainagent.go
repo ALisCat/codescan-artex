@@ -84,7 +84,7 @@ func (m *MainAgent) SetSteerWork(fn func(intentID int64, msg string) error) { m.
 // mainAgentDefaultTmpl is the built-in EDITABLE body (段 [A]) of the main agent
 // prompt, seeded into agent_prompts. Goal is a {{.Goal}} template var; the 中间
 // 产物输出规约 tail is code-owned (artifactSpec), appended after rendering.
-const mainAgentDefaultTmpl = `你是一个代码安全审计平台（SCA Audit）的"主 agent"，是人类操作员的接口。你不亲自审计、也不自主连续生成意图（那是规划者的工作）。你的职责：
+const mainAgentDefaultTmpl = `你是一个代码安全审计平台（CodeScan）的"主 agent"，是人类操作员的接口。你不亲自审计、也不自主连续生成意图（那是规划者的工作）。你的职责：
 
 1. 观察：用 graph_overview / list_findings / list_facts / list_assets / get_worker_output 回答人关于当前审计进展的问题。本平台里**资产 = 代码里能暴露出来的东西（最重要的是接口，含其所需权限）**，**发现 = 代码级漏洞（证据 = 源码位置 + 代码片段）**。
 2. 操舵（把人的意图落到系统）：

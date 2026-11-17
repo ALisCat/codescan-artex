@@ -7,7 +7,7 @@ package agent
 // 注入(见 worker.go 的 workerTrafficBlock/artifactSpec)，不入库、不可编辑，因此
 // 不在种子里。种子文本用 Go 模板占位({{.Goal}} 等)，渲染时按运行期变量填充。
 //
-// 六个内置 agent 的正文都面向【代码安全审计】(SCA Audit)：资产 = 代码里能暴露出来
+// 六个内置 agent 的正文都面向【代码安全审计】(CodeScan)：资产 = 代码里能暴露出来
 // 的东西（最重要的是接口及其所需权限），发现 = 代码级漏洞（证据 = 源码位置 + 代码
 // 片段），只有本地文件工具与平台读写工具可用，不含任何出网/执行/流量类能力。
 
@@ -18,7 +18,7 @@ package agent
 // MCP 已是平台禁用的能力（见 codeaudit_tools.go 的黑名单），正文里不再提及，
 // 免得模型去调一个永远不存在的工具。It seeds into agent_prompts like the other
 // built-ins.
-const autoDefaultTmpl = `你是 **Auto**，这个代码安全审计平台（SCA Audit）的「操作助手」。你不亲自审代码，而是**用工具操作平台**、按用户指令把事情办好。
+const autoDefaultTmpl = `你是 **Auto**，这个代码安全审计平台（CodeScan）的「操作助手」。你不亲自审代码，而是**用工具操作平台**、按用户指令把事情办好。
 
 你能做的（取决于给你开放了哪些工具）：
 1. **任务操作**：list_tasks 看全局、list_llm_profiles 看可用模型配置、spawn_task 起子任务（子任务以用户上传的源码包为审计对象）、get_task_graph / list_task_findings 读某任务的进展与已确认漏洞、get_task_worker_trace / list_task_worker_traces / search_task_worker_traces 看某个 work 的审计过程、get_task_node_detail 读节点详情、pause_task 暂停、add_task_hint 给任务注入提示、update_finding_report 修报告。
@@ -37,7 +37,7 @@ const autoDefaultTmpl = `你是 **Auto**，这个代码安全审计平台（SCA 
 // 为兼容已有 DB/绑定而不改名）。与编排三件套（goals/planner/worker）不同，它通过
 // 对话页独立运行，自己既是规划者也是执行者与复核者。默认工具：list_assets /
 // insert_assets / report_finding / list_findings（绑在 toolcatalog 里）。
-const pentestDefaultTmpl = `你是一个代码安全审计平台（SCA Audit）的"独立审计 agent"。你**一个人从头审到尾**：摸源码树 → 找入口与接口 → 判权限 → 追数据流到危险 Sink → 确认缺陷 → 收尾。你同时是自己的规划者和执行者——没有别人给你派活，也没有别人替你把关，所有判断都由你完成。正因如此，你要**主动切换视角**：该拓宽时像规划者一样铺开多条路线，该深入时像执行者一样把一条调用链走透，该复核时像审计者一样怀疑自己的结论。
+const pentestDefaultTmpl = `你是一个代码安全审计平台（CodeScan）的"独立审计 agent"。你**一个人从头审到尾**：摸源码树 → 找入口与接口 → 判权限 → 追数据流到危险 Sink → 确认缺陷 → 收尾。你同时是自己的规划者和执行者——没有别人给你派活，也没有别人替你把关，所有判断都由你完成。正因如此，你要**主动切换视角**：该拓宽时像规划者一样铺开多条路线，该深入时像执行者一样把一条调用链走透，该复核时像审计者一样怀疑自己的结论。
 
 
 **只在授权范围内审计。范围外的代码与系统一律不碰。**
@@ -91,7 +91,7 @@ const DefaultAssistantPrompt = `你是一个乐于助人的 AI 助手。请用�
 // agent — triggered when report_finding fires. It gathers the finding's full
 // source-code evidence + how it was found, writes a Markdown audit report, and
 // saves it via update_finding_report.
-const ReporterDefaultPrompt = `你是 **SCA Audit 代码审计平台**里的**漏洞报告撰写 agent**。你只做一件事：为**刚刚被确认登记的某一个代码缺陷**撰写一份专业、可复核、面向修复的**详细报告(Markdown)**，并保存回该缺陷。本平台是**只读静态源码审计**：不发起任何网络请求、不执行任何命令、不做利用验证——报告只能由源码证据支撑。
+const ReporterDefaultPrompt = `你是 **CodeScan 代码审计平台**里的**漏洞报告撰写 agent**。你只做一件事：为**刚刚被确认登记的某一个代码缺陷**撰写一份专业、可复核、面向修复的**详细报告(Markdown)**，并保存回该缺陷。本平台是**只读静态源码审计**：不发起任何网络请求、不执行任何命令、不做利用验证——报告只能由源码证据支撑。
 
 ━━ 你是怎么被唤起的 ━━
 每当有 worker 调用 report_finding 登记了一个缺陷，系统就会用一段【由工具调用触发】的上下文唤起你，其中包含：

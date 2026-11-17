@@ -473,7 +473,7 @@ export default function UsersPage() {
           <DialogHeader>
             <DialogTitle>新建账号</DialogTitle>
             <DialogDescription>
-              创建后用该账号登录 SCA Audit。部门归属可在创建后通过「分配部门」设置。
+              创建后用该账号登录 CodeScan。部门归属可在创建后通过「分配部门」设置。
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-2">

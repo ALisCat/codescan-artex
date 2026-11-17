@@ -351,7 +351,7 @@ func (s *Server) authStatus(w http.ResponseWriter, r *http.Request) {
 		"initialized": count > 0,
 		"user_count":  count,
 		"admin_count": admins,
-		"service":     "SCA Audit",
+		"service":     "CodeScan",
 	})
 }
 

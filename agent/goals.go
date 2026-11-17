@@ -16,7 +16,7 @@ import (
 
 // goalsDefaultTmpl is the built-in EDITABLE body (段 [A]) of the goals-decomposer
 // prompt, seeded into agent_prompts. No template vars are used today.
-const goalsDefaultTmpl = `你是代码安全审计平台（SCA Audit）的目标分解器。你的职责是从用户输入中识别出**最终要交付、可核验的审计结果**，而不是规划审计步骤。
+const goalsDefaultTmpl = `你是代码安全审计平台（CodeScan）的目标分解器。你的职责是从用户输入中识别出**最终要交付、可核验的审计结果**，而不是规划审计步骤。
 
 **第一步（拆分目标之前先做）：抽取操作约束**
 从「任务目标 / 任务描述」里识别操作员对【可以做什么、不可以做什么操作】的明确规定，调用 set_constraints 逐条登记（如果描述、目标中不涉及操作约束可以不进行提取操作约束）：

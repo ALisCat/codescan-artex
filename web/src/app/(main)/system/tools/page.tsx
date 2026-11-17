@@ -459,7 +459,7 @@ export default function ToolsPage() {
                       ? `shell/command/script/http，${customTools.length} / ${allCustomCount} 个匹配，点击卡片编辑`
                       : `shell(bash 声明) / command(命令) / script(Python) / http(API)，共 ${allCustomCount} 个，点击卡片编辑`}
                     <br />
-                    注意：SCA Audit 的 agent 只保留本地文件读写工具，这里定义的自定义工具
+                    注意：CodeScan 的 agent 只保留本地文件读写工具，这里定义的自定义工具
                     <b>不会</b>下发给任何审计 agent（工具层按白名单过滤，出网/执行类一律剔除）。
                   </CardDescription>
                 </div>

@@ -10,7 +10,7 @@ import type { UserAccount } from "@/lib/types";
 // 仍要有东西可渲染，但不能伪装成某个真实用户名。
 const FALLBACK: CurrentUser = {
   id: "",
-  name: "SCA Audit",
+  name: "CodeScan",
   username: "",
   email: "",
   avatar: "",

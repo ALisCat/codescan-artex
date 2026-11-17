@@ -90,7 +90,7 @@ export default function SetupPage() {
           <div className="absolute size-60 rounded-full border border-primary-foreground/15" />
           <div className="absolute size-40 rounded-full border border-primary-foreground/20" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="SCA Audit" width={160} height={160} className="relative brightness-0 invert" />
+          <img src="/logo.png" alt="CodeScan" width={160} height={160} className="relative brightness-0 invert" />
         </div>
       </div>
 
@@ -104,7 +104,7 @@ export default function SetupPage() {
             <p className="mx-auto max-w-xl text-muted-foreground">
               {unavailable
                 ? "后端或数据库暂时不可用。为避免覆盖实例上已有的账号，初始化入口已临时关闭——请恢复服务后重试。"
-                : "SCA Audit 是代码审计平台。首次使用，请创建第一个管理员账号（拥有全部管理权限）"}
+                : "CodeScan 是代码审计平台。首次使用，请创建第一个管理员账号（拥有全部管理权限）"}
             </p>
           </div>
           {unavailable ? (

@@ -1,4 +1,4 @@
-// Command artex runs the SCA Audit backend: the dual SQLite graph stores,
+// Command artex runs the CodeScan backend: the dual SQLite graph stores,
 // the event-driven exploration engine, and the JSON HTTP API consumed by the
 // shadcn/ui frontend.
 package main
@@ -53,7 +53,7 @@ func run() int {
 	var (
 		addr    = flag.String("addr", ":7878", "HTTP listen address")
 		dataDir = flag.String("data", filepath.Join(config.BaseDir(), "data"), "data directory for SQLite stores (default: data/ next to the executable)")
-		// 流量录制代理默认关闭：SCA Audit 是代码审计平台，不做任何对外请求/抓包。
+		// 流量录制代理默认关闭：CodeScan 是代码审计平台，不做任何对外请求/抓包。
 		// 仅当显式传入非空地址时才启用（保留给需要自建流量的场景）。
 		proxy = flag.String("proxy", "", "traffic recording proxy address (empty = disabled, default)")
 	)
@@ -121,7 +121,7 @@ func run() int {
 	}
 
 	go func() {
-		log.Printf("SCA Audit %s backend listening on %s (data=%s, workers=%d)", version, *addr, *dataDir, mgr.Workers())
+		log.Printf("CodeScan %s backend listening on %s (data=%s, workers=%d)", version, *addr, *dataDir, mgr.Workers())
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("serve: %v", err)
 		}
