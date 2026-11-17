@@ -339,7 +339,9 @@ planner add_intent(IntentSpec)
 只有 summary 的自由文本意图会被拒绝，避免 planner 重新全仓探索。
 
 - 结构化 cell 补派不占 `matrix_planner_extra_limit`；
-- 仅 repo 级补派受额度限制；
+- 跨接口同类模式用 `scope=pattern`，必须带 `pattern` + `files/endpoints`；
+- 真正的仓库级补派用 `scope=repo`；
+- `pattern` / `repo` 都受额度限制；
 - 任务完成门禁会阻止 `goal_met` 在 applicable 格子未完成时通过。
 
 ---

@@ -1082,9 +1082,12 @@ type IntentSpec struct {
 	Priority  int               `json:"priority"`
 	CellKeys  []string          `json:"cell_keys"`
 	Targets   []IntentTarget    `json:"targets"`
-	Scope     string            `json:"scope"`
-	Files     []string          `json:"files"`
-	Endpoints []string          `json:"endpoints"`
+	// Scope: endpoint | repo | pattern. repo = repository-level problem;
+	// pattern = one cross-cutting pattern across a bounded file/endpoint set.
+	Scope     string   `json:"scope"`
+	Pattern   string   `json:"pattern"`
+	Files     []string `json:"files"`
+	Endpoints []string `json:"endpoints"`
 }
 
 // ResolvedIntent 是服务端把结构化目标解析成矩阵 payload 的结果。
@@ -1191,8 +1194,9 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 			"priority":   intp("优先级 0-10，默认5"),
 			"cell_keys":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "矩阵任务结构化补派：已有 ca_cells 的 cell_key，例如 /api/x:authz。服务端会自动注入 cases/hints/flow。"},
 			"targets":    map[string]any{"type": "array", "description": "矩阵任务结构化补派：method+url+vulnclass；不存在时会创建新矩阵格。", "items": map[string]any{"type": "object"}},
-			"scope":      str("矩阵任务补派范围：endpoint 或 repo。repo 需配合 files/endpoints。"),
-			"files":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "补派涉及的文件（尤其 repo scope / 新接口）。"},
+			"scope":      str("矩阵任务补派范围：endpoint | repo | pattern。repo=仓库级问题；pattern=跨接口同类模式，需配合 pattern+files/endpoints。"),
+			"pattern":    str("scope=pattern 时必填：要复核的同类模式，例如 MyBatis ${} 插值、固定 URL 客户端、文件上传落盘路径。"),
+			"files":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "补派涉及的文件（尤其 repo/pattern scope / 新接口）。"},
 			"endpoints":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "补派涉及的接口路径。"},
 		}),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {

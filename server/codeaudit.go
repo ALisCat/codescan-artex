@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -693,7 +694,46 @@ func matrixPriority(p int) int {
 // 目的：矩阵本身已枚举方向，planner 只应补"矩阵没覆盖的缺口"，不应再派
 // "汇总/盘点/落盘"这类元任务。
 func matrixIntentIsStructured(spec agent.IntentSpec) bool {
-	return len(spec.CellKeys) > 0 || len(spec.Targets) > 0 || spec.Scope == "repo"
+	scope := strings.ToLower(strings.TrimSpace(spec.Scope))
+	return len(spec.CellKeys) > 0 || len(spec.Targets) > 0 ||
+		scope == "repo" || scope == "pattern"
+}
+
+var matrixEndpointInPayload = regexp.MustCompile(`/api/[A-Za-z0-9_./{}:*?\-]+`)
+
+// matrixPayloadEndpointCount counts distinct endpoint-like paths in a fact/finding.
+// It is a scope heuristic, not a security conclusion.
+func matrixPayloadEndpointCount(payload []byte) int {
+	seen := map[string]bool{}
+	for _, ep := range matrixEndpointInPayload.FindAllString(string(payload), -1) {
+		ep = strings.TrimRight(ep, ".,;:)]")
+		seen[ep] = true
+	}
+	return len(seen)
+}
+
+// matrixParentLooksEndpointScoped reports whether a parent fact/finding names a
+// single endpoint and no broader set. Such an observation should stay focused
+// (cell_keys/targets) or use scope=pattern; scope=repo would let the worker roam
+// over unrelated files.
+func matrixParentLooksEndpointScoped(t *Task, parents []json.RawMessage) bool {
+	if t == nil || t.Store == nil {
+		return false
+	}
+	for _, raw := range parents {
+		var id int64
+		if err := json.Unmarshal(raw, &id); err != nil || id <= 0 {
+			continue
+		}
+		n, err := t.Store.GetNodeWithSources(id)
+		if err != nil || n == nil {
+			continue
+		}
+		if matrixPayloadEndpointCount(n.Payload) == 1 {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) matrixGuardForTask(t *Task, spec agent.IntentSpec) (bool, string) {
@@ -709,12 +749,25 @@ func (s *Server) matrixGuardForTask(t *Task, spec agent.IntentSpec) (bool, strin
 		return true, "" // 非矩阵任务
 	}
 	if !matrixIntentIsStructured(spec) {
-		return false, "矩阵任务补派必须提供 cell_keys 或 targets（或 scope=repo + files/endpoints）。" +
+		return false, "矩阵任务补派必须提供 cell_keys 或 targets（或 scope=repo/pattern + files/endpoints）。" +
 			"不允许再生成只有 summary 的聚合专项；请直接指向具体矩阵格/接口类型。"
 	}
 	// 结构化接口补派不占 extra 额度：worker 反馈回来的新事实可以继续派。
-	// repo 级补派仍受额度限制，避免 planner 用 repo scope 绕过矩阵。
-	if spec.Scope == "repo" {
+	// repo/pattern 级补派仍受额度限制，避免 planner 用宽 scope 绕过矩阵。
+	scope := strings.ToLower(strings.TrimSpace(spec.Scope))
+	if scope == "pattern" {
+		if strings.TrimSpace(spec.Pattern) == "" {
+			return false, "scope=pattern 必须提供 pattern（要复核的同类模式）"
+		}
+		if len(spec.Files) == 0 && len(spec.Endpoints) == 0 {
+			return false, "scope=pattern 必须提供 files 或 endpoints（限定模式复核范围）"
+		}
+	}
+	if scope == "repo" && len(spec.Endpoints) == 0 && matrixParentLooksEndpointScoped(t, spec.ParentIDs) {
+		return false, "父事实指向单个接口，不能用 scope=repo 扩成全仓扫描；" +
+			"请用 cell_keys/targets 聚焦该接口，或改用 scope=pattern + pattern/files 限定同类模式。"
+	}
+	if scope == "repo" || scope == "pattern" {
 		limit := 10
 		if v, ok, _ := s.m.PG().GetSetting("matrix_planner_extra_limit"); ok {
 			if k, err := strconv.Atoi(v); err == nil && k >= 0 {
@@ -726,7 +779,7 @@ func (s *Server) matrixGuardForTask(t *Task, spec agent.IntentSpec) (bool, strin
 			return true, ""
 		}
 		if used >= limit {
-			return false, "矩阵任务 repo 级补派额度已用完（" + strconv.Itoa(used) + "/" + strconv.Itoa(limit) + "）"
+			return false, "矩阵任务 repo/pattern 级补派额度已用完（" + strconv.Itoa(used) + "/" + strconv.Itoa(limit) + "）"
 		}
 	}
 	return true, ""
@@ -777,7 +830,21 @@ func (s *Server) resolveMatrixIntent(t *Task, spec agent.IntentSpec) (*agent.Res
 	if err != nil || n == 0 {
 		return nil, nil // 非矩阵任务：保持自然语言意图
 	}
-	if spec.Scope == "repo" {
+	scope := strings.ToLower(strings.TrimSpace(spec.Scope))
+	if scope == "pattern" {
+		if strings.TrimSpace(spec.Pattern) == "" {
+			return nil, fmt.Errorf("pattern 补派必须提供 pattern")
+		}
+		if len(spec.Files) == 0 && len(spec.Endpoints) == 0 {
+			return nil, fmt.Errorf("pattern 补派必须提供 files 或 endpoints")
+		}
+		payload := map[string]any{
+			"summary": spec.Summary, "scope": "pattern", "pattern": spec.Pattern,
+			"files": spec.Files, "endpoints": spec.Endpoints,
+		}
+		return &agent.ResolvedIntent{Payload: payload}, nil
+	}
+	if scope == "repo" {
 		if len(spec.Files) == 0 && len(spec.Endpoints) == 0 {
 			return nil, fmt.Errorf("repo 补派必须提供 files 或 endpoints")
 		}

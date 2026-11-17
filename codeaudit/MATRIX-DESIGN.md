@@ -2180,3 +2180,30 @@ POST /api/codeaudit/tasks/{id}/cells/manual-add
 - `TestManualCellHintsOnlyCopiesEndpointFlow`
 - `TestFindEndpointCellPrefersLongestFlow`
 - `TestMergeEndpointHintsKeepsExistingFields`
+
+## 38. 补派范围：endpoint / pattern / repo（v1）
+
+1470 暴露了一个边界问题：worker 对单接口 SQL clean 的“附带观察”，被 planner
+写成了 `scope=repo`，worker 随后扩展到全部 Mapper/Service，脱离当前接口。
+
+现在将补派范围分为三档：
+
+| 范围 | 使用场景 | 必填 | 矩阵回写 |
+| --- | --- | --- | --- |
+| `cell_keys` / `targets` | 单接口、单格、worker 新观察 | 目标键或 targets + parent_ids | 是 |
+| `scope=pattern` | 跨接口同类模式（MyBatis `${}`、固定 URL、落盘路径等） | pattern + files/endpoints | 否 |
+| `scope=repo` | 真正的仓库级问题（secrets/crypto/dependency 等） | files/endpoints | 否 |
+
+服务端约束：
+
+- `scope=pattern` 必须有 pattern，且 files/endpoints 至少一个；
+- 单接口 parent fact + `scope=repo` 且没有 endpoints → 拒绝，要求
+  `cell_keys`/`targets` 或 `scope=pattern`；
+- pattern/repo 都受 `matrix_planner_extra_limit` 限制；
+- structured cell 补派不占该额度。
+
+worker 侧：
+
+- `pattern` 使用独立 prelude，明确“只复核该模式，不扩展到其他漏洞类型”；
+- `repo` 仍按仓库范围渲染；
+- files 始终是起点，不是绝对读取白名单，但 pattern 要求最小扩展。

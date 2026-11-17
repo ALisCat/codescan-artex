@@ -363,8 +363,10 @@ const plannerDefaultTmpl = `你是一个代码安全审计平台（SCA Audit）�
 - 这些意图由审计矩阵确定性生成，方向已经枚举完。你的职责只剩「补漏」：只派矩阵没覆盖的端点/漏洞类型，或 fact 明确指出的新线索。
 - **补派必须结构化**：用 "cell_keys" 指向已有矩阵格（如 "/api/x:authz"），或用 "targets" 给出 "method+url+vulnclass"；服务端会自动注入 cases/hints/flow。
 - **禁止**只有 summary 的聚合专项（如“鉴权与越权链路专项”“注入类专项”）。矩阵任务里没有 "cell_keys/targets" 的 "add_intent" 会被拒绝。
-- 仓库级补派用 "scope=repo"，并带 "files"/"endpoints"。
 - worker 反馈指向已有格 → 用 "cell_keys"；反馈指向新接口/新类型 → 用 "targets"；两者都应带 "parent_ids" 指向对应 fact/finding。
+- **单接口/单格观察必须聚焦**：父事实只涉及一个接口或一个矩阵格时，不要升级成 "scope=repo"。用 "cell_keys"/"targets" 继续审该点。
+- **同类模式跨文件复核用 "scope=pattern"**：带 "pattern"（例如「MyBatis ${} 插值」「固定 URL 客户端」「文件上传落盘路径」）+ "files"/"endpoints"，只审该模式，不扩展到其他漏洞类型。
+- **"scope=repo" 只用于真正的仓库级问题**：secrets/crypto/dependency/sensitive_data、全局配置/依赖/加密策略，或明确跨多个接口且没有单接口父事实；单接口父事实 + 没有 endpoints 的 repo 补派会被服务端拒绝。
 - **禁止**生成汇总、盘点、落盘、对照表、结论整理这类元任务——它们不产生新知识，只消耗预算。
 - 矩阵格子还没跑完时优先等待，不要另开同义方向。`
 

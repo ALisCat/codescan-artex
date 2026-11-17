@@ -713,6 +713,8 @@ func plannerIntentPrelude(intent *db.Node) string {
 	var p struct {
 		Summary     string   `json:"summary"`
 		Description string   `json:"description"`
+		Scope       string   `json:"scope"`
+		Pattern     string   `json:"pattern"`
 		Files       []string `json:"files"`
 		Endpoints   []string `json:"endpoints"`
 	}
@@ -741,6 +743,12 @@ func plannerIntentPrelude(intent *db.Node) string {
 
 	var b strings.Builder
 	b.WriteString("\n\n【planner 补漏范围（优先只读这些，不要全仓扫描）】")
+	if strings.EqualFold(p.Scope, "pattern") {
+		b.WriteString("\n范围模式：pattern（只复核下列模式，不扩展到其他漏洞类型）")
+		if strings.TrimSpace(p.Pattern) != "" {
+			b.WriteString("\n目标模式：" + strings.TrimSpace(p.Pattern))
+		}
+	}
 	if len(files) > 0 {
 		b.WriteString("\n目标文件：" + strings.Join(files, "、"))
 	}
@@ -752,6 +760,19 @@ func plannerIntentPrelude(intent *db.Node) string {
 	}
 	b.WriteString("\n【约束】先读以上目标；范围不足时只补读最小必要文件，并在结论里说明扩展理由。全局任务先列清单再按清单读。最多读 10 个文件；超出请提交 needs_more 并说明缺口。")
 	return b.String()
+}
+
+func intentOriginPayloadScope(intent *db.Node) string {
+	if intent == nil {
+		return ""
+	}
+	var p struct {
+		Scope string `json:"scope"`
+	}
+	if err := json.Unmarshal(intent.Payload, &p); err != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(p.Scope))
 }
 
 func renderIntentTask(intent *db.Node) string {
@@ -783,6 +804,11 @@ func renderWorkerGraphOverview(data map[string]any, mode string) string {
 			"先按【审计路径】核对；路径中的文件就是全部需要看的文件。" +
 			"禁止读其他 controller/service、测试/标注文件；禁止全仓 grep（守卫函数实现除外）。" +
 			"找到 sink + 守卫证据就提交 verdict；只有路径明确标注不完整时才允许扩展。"
+	}
+	if mode == "pattern" {
+		return "\n\n【全局探索态势（只读，pattern 模式复核）】：\n" + string(b) +
+			"\n\n你在执行跨接口同类模式复核：只核对【目标模式】，不要扩展到其他漏洞类型或无关业务逻辑。" +
+			"先按【planner 补漏范围】读目标文件/接口；范围不足时只补读最小必要文件并在结论中说明理由；最多读 10 个文件。"
 	}
 	if mode == "planner" {
 		return "\n\n【全局探索态势（只读，planner 补漏任务）】：\n" + string(b) +
@@ -856,6 +882,8 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	mode := "normal"
 	if len(intentCellKeys(intent)) > 0 {
 		mode = "matrix"
+	} else if intentOriginPayloadScope(intent) == "pattern" {
+		mode = "pattern"
 	} else if intent.Origin == "planner" || (strings.Contains(string(intent.Payload), `"summary"`) && !strings.Contains(string(intent.Payload), `"cell_keys"`)) {
 		mode = "planner"
 	}

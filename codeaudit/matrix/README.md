@@ -179,3 +179,21 @@ SQL 分析器不再把“出现 SQL/DAO”直接当成 `possible`。它只关联
 - `analyzers/sql_injection.py`：状态映射和 evidence；
 - evidence 新增 `sql_features`、`sql_mode`、`neutralizers`；
 - `impossible` 表示“没有观察到 SQL 注入特征”，不是“安全结论”。
+
+## 补派范围：endpoint、pattern、repo
+
+矩阵任务中的 planner 补派按范围分三档：
+
+| scope | 用途 | 必填 | 是否绑定矩阵格 |
+| --- | --- | --- | --- |
+| `cell_keys` / `targets` | 单个接口/单格、worker 新观察 | cell/target + parent_ids | 是 |
+| `pattern` | 跨接口同类模式复核 | pattern + files/endpoints | 否 |
+| `repo` | 真正的仓库级问题（secrets/crypto/dependency 等） | files/endpoints | 否 |
+
+约束：
+
+- 单个 endpoint fact 不能直接升级成 `scope=repo`；服务端会拒绝并要求使用
+  `cell_keys` / `targets` 或 `scope=pattern`；
+- `scope=pattern` 必须给出明确的 `pattern`，worker 只检查该模式，不扩展到其他漏洞类型；
+- `pattern` / `repo` 都受 `matrix_planner_extra_limit` 限制；
+- 结构化单格补派不占该额度。
