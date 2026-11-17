@@ -23,16 +23,11 @@ const (
 	settingGitLabVerifiedAt = "gitlab_verified_at"
 )
 
-const defaultGitLabBaseURL = "https://gitlab.healthan.net"
-
 var gitlabProjectPathRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+$`)
 
 func (s *Server) gitlabConfig() (baseURL, token, verifiedUser, verifiedAt string) {
 	baseURL, _, _ = s.m.pg.GetSetting(settingGitLabBaseURL)
 	baseURL = strings.TrimSpace(baseURL)
-	if baseURL == "" {
-		baseURL = defaultGitLabBaseURL
-	}
 	token, _, _ = s.m.pg.GetSetting(settingGitLabToken)
 	token = strings.TrimSpace(token)
 	verifiedUser, _, _ = s.m.pg.GetSetting(settingGitLabUser)
@@ -52,6 +47,11 @@ func tokenHint(token string) string {
 }
 
 func normalizeGitLabBaseURL(raw string) (string, error) {
+	// Empty means "not configured". It is intentionally allowed so an admin can
+	// remove a previously stored address without having to edit the database.
+	if strings.TrimSpace(raw) == "" {
+		return "", nil
+	}
 	c, err := gitlabsrc.New(raw, "")
 	if err != nil {
 		return "", err
@@ -61,6 +61,9 @@ func normalizeGitLabBaseURL(raw string) (string, error) {
 
 func (s *Server) gitlabClient() (*gitlabsrc.Client, error) {
 	baseURL, token, _, _ := s.gitlabConfig()
+	if strings.TrimSpace(baseURL) == "" {
+		return nil, fmt.Errorf("尚未配置 GitLab 地址")
+	}
 	if strings.TrimSpace(token) == "" {
 		return nil, fmt.Errorf("尚未配置 GitLab Token")
 	}
@@ -75,7 +78,7 @@ func (s *Server) gitlabSettingsPayload() map[string]any {
 		"gitlab_token_hint":    tokenHint(token),
 		"gitlab_verified_user": verifiedUser,
 		"gitlab_verified_at":   verifiedAt,
-		"gitlab_configured":    strings.TrimSpace(token) != "",
+		"gitlab_configured":    strings.TrimSpace(baseURL) != "" && strings.TrimSpace(token) != "",
 	}
 }
 
@@ -98,6 +101,10 @@ func (s *Server) testGitLab(w http.ResponseWriter, r *http.Request) {
 	token := storedToken
 	if strings.TrimSpace(req.Token) != "" {
 		token = req.Token
+	}
+	if strings.TrimSpace(baseURL) == "" {
+		writeJSON(w, 200, map[string]any{"ok": false, "error": "尚未配置 GitLab 地址"})
+		return
 	}
 	baseURL, err := normalizeGitLabBaseURL(baseURL)
 	if err != nil {

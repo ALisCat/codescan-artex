@@ -53,7 +53,7 @@ export default function SystemSettingsPage() {
   // 实验功能:noa 上下文压缩(默认关)。
   const [noaCompaction, setNoaCompaction] = React.useState(false);
   // GitLab 系统级连接。Token 只写不读：已配置时只显示 hint，输入框留空表示不改。
-  const [gitlabBaseURL, setGitLabBaseURL] = React.useState("https://gitlab.healthan.net");
+  const [gitlabBaseURL, setGitLabBaseURL] = React.useState("");
   const [gitlabTokenSet, setGitlabTokenSet] = React.useState(false);
   const [gitlabTokenHint, setGitlabTokenHint] = React.useState("");
   const [gitlabTokenInput, setGitlabTokenInput] = React.useState("");
@@ -78,7 +78,7 @@ export default function SystemSettingsPage() {
     setInjectPlanner(s.constraints_inject_planner !== false);
     setInjectWorker(s.constraints_inject_worker !== false);
     setNoaCompaction(!!s.noa_compaction);
-    setGitLabBaseURL(s.gitlab_base_url || "https://gitlab.healthan.net");
+    setGitLabBaseURL(s.gitlab_base_url || "");
     setGitlabTokenSet(!!s.gitlab_token_set);
     setGitlabTokenHint(s.gitlab_token_hint || "");
     setGitlabVerifiedUser(s.gitlab_verified_user || "");
@@ -258,10 +258,6 @@ export default function SystemSettingsPage() {
 
   const saveGitLab = () => {
     const base = gitlabBaseURL.trim();
-    if (!base) {
-      toast.error("请填写 GitLab 地址");
-      return;
-    }
     setSavingGitLab(true);
     api
       .setSettings({
@@ -270,7 +266,7 @@ export default function SystemSettingsPage() {
       })
       .then((s) => {
         apply(s);
-        toast.success(gitlabTokenInput.trim() ? "已保存 GitLab 地址和 Token" : "已保存 GitLab 地址");
+        toast.success(gitlabTokenInput.trim() ? "已保存 GitLab 地址和 Token" : base ? "已保存 GitLab 地址" : "已清除 GitLab 地址");
       })
       .catch((e) => toast.error("保存 GitLab 配置失败：" + (e as Error).message))
       .finally(() => setSavingGitLab(false));
