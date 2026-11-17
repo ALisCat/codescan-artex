@@ -442,6 +442,10 @@ func matrixPriority(p int) int {
 //
 // 目的：矩阵本身已枚举方向，planner 只应补"矩阵没覆盖的缺口"，不应再派
 // "汇总/盘点/落盘"这类元任务。
+func matrixIntentIsStructured(spec agent.IntentSpec) bool {
+	return len(spec.CellKeys) > 0 || len(spec.Targets) > 0 || spec.Scope == "repo"
+}
+
 func (s *Server) matrixGuardForTask(t *Task, spec agent.IntentSpec) (bool, string) {
 	if s.m == nil || s.m.PG() == nil || t == nil {
 		return true, ""
@@ -454,8 +458,7 @@ func (s *Server) matrixGuardForTask(t *Task, spec agent.IntentSpec) (bool, strin
 	if err != nil || n == 0 {
 		return true, "" // 非矩阵任务
 	}
-	structured := len(spec.CellKeys) > 0 || len(spec.Targets) > 0
-	if !structured && spec.Scope != "repo" {
+	if !matrixIntentIsStructured(spec) {
 		return false, "矩阵任务补派必须提供 cell_keys 或 targets（或 scope=repo + files/endpoints）。" +
 			"不允许再生成只有 summary 的聚合专项；请直接指向具体矩阵格/接口类型。"
 	}
@@ -477,6 +480,38 @@ func (s *Server) matrixGuardForTask(t *Task, spec agent.IntentSpec) (bool, strin
 		}
 	}
 	return true, ""
+}
+
+// matrixPendingForTask 返回 applicable 格中 pending/dispatched 的数量。
+func (s *Server) matrixPendingForTask(t *Task) (int, int, error) {
+	if s.m == nil || s.m.PG() == nil || t == nil {
+		return 0, 0, nil
+	}
+	taskID, err := parseTaskID(t.ID)
+	if err != nil {
+		return 0, 0, err
+	}
+	cells, err := s.m.PG().Cells().List(taskID, "")
+	if err != nil {
+		return 0, 0, err
+	}
+	pending, dispatched := 0, 0
+	for _, c := range cells {
+		if c.Eligibility != "applicable" {
+			continue
+		}
+		switch c.Status {
+		case "pending":
+			pending++
+		case "dispatched":
+			dispatched++
+		}
+	}
+	return pending, dispatched, nil
+}
+
+func (s *Server) matrixSeedForTask(t *Task) (int, error) {
+	return s.seedCellIntents(t, 0)
 }
 
 // resolveMatrixIntent 把 planner 的 cell_keys/targets 解析成矩阵 cases/hints。

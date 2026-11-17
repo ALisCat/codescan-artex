@@ -92,6 +92,9 @@ type ToolSet struct {
 	matrixGuard func(IntentSpec) (bool, string)
 	// 二开：矩阵任务的结构化 intent 解析器；把 cell_keys/targets 注入 cases/hints。
 	matrixIntentResolver func(IntentSpec) (*ResolvedIntent, error)
+	// 二开：矩阵完成门禁。pending/dispatched 数量；seed 用于自动补派 pending 格。
+	matrixPending func() (pending, dispatched int, err error)
+	matrixSeed    func() (int, error)
 	// 二开：矩阵结论回写。nil = 当前任务没有矩阵上下文（工具报不可用）。
 	cellVerdict func(cellKey, verdict, reason string, evidence json.RawMessage) error
 	// resumeTask, if set, revives the task after a graph change that should make a
@@ -141,6 +144,34 @@ func (t *ToolSet) SetMatrixGuard(fn func(IntentSpec) (bool, string)) { t.matrixG
 // SetMatrixIntentResolver 注入矩阵结构化 intent 解析器。
 func (t *ToolSet) SetMatrixIntentResolver(fn func(IntentSpec) (*ResolvedIntent, error)) {
 	t.matrixIntentResolver = fn
+}
+
+// SetMatrixCompletion 注入矩阵完成门禁。
+func (t *ToolSet) SetMatrixCompletion(pending func() (int, int, error), seed func() (int, error)) {
+	t.matrixPending = pending
+	t.matrixSeed = seed
+}
+
+// matrixBlockReason 返回矩阵任务是否还不能结束；pending 会自动补派。
+func (t *ToolSet) matrixBlockReason() (bool, string) {
+	if t.matrixPending == nil {
+		return false, ""
+	}
+	pending, dispatched, err := t.matrixPending()
+	if err != nil {
+		return true, "矩阵状态读取失败：" + err.Error()
+	}
+	if pending > 0 {
+		seeded := 0
+		if t.matrixSeed != nil {
+			seeded, _ = t.matrixSeed()
+		}
+		return true, fmt.Sprintf("矩阵任务还有 %d 个 applicable 格未派发（已自动补派 %d 个），任务不能结束", pending, seeded)
+	}
+	if dispatched > 0 {
+		return true, fmt.Sprintf("矩阵任务还有 %d 个 applicable 格已派发未回写，任务不能结束", dispatched)
+	}
+	return false, ""
 }
 
 // SetCellVerdict 注入矩阵结论回写回调（server 侧用 task_id 绑定 ca_cells）。
@@ -1259,6 +1290,10 @@ func (t *ToolSet) proveGoal() actool.CoreTool {
 					}
 				}
 				if allMet {
+					if blocked, reason := t.matrixBlockReason(); blocked {
+						t.Reason = reason
+						return actool.Errorf(reason), nil
+					}
 					t.GoalMet = true
 					t.Reason = fmt.Sprintf("所有 %d 个目标均已 met（最后由 goal %d 触发）", len(goals), goal)
 					return actool.Text(fmt.Sprintf("goal %d marked met；本任务所有目标均已达成，任务自动判定完成", goal)), nil
@@ -1274,6 +1309,10 @@ func (t *ToolSet) goalMet() actool.CoreTool {
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct{ Reason string }
 			_ = json.Unmarshal(in, &a)
+			if blocked, reason := t.matrixBlockReason(); blocked {
+				t.Reason = reason
+				return actool.Errorf(reason), nil
+			}
 			t.GoalMet = true
 			t.Reason = a.Reason
 			return actool.Text("acknowledged: goal marked met"), nil

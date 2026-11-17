@@ -42,6 +42,8 @@ type Planner struct {
 	// 二开：矩阵任务的补派守卫（返回 allowed/reason）。nil = 不限制。
 	matrixGuard          func(IntentSpec) (bool, string)
 	matrixIntentResolver func(IntentSpec) (*ResolvedIntent, error)
+	matrixPending        func() (pending, dispatched int, err error)
+	matrixSeed           func() (int, error)
 
 	// todos 为每个任务保留【一份】计划草稿（按 exploration id 索引），让规划者的多步计划
 	// 跨唤醒存活：每次 Plan() 都是全新会话，但共享的草稿存储让它能把一条【串行调用链】
@@ -128,6 +130,12 @@ func (p *Planner) SetMatrixGuard(fn func(IntentSpec) (bool, string)) { p.matrixG
 // SetMatrixIntentResolver 注入矩阵结构化 intent 解析器。
 func (p *Planner) SetMatrixIntentResolver(fn func(IntentSpec) (*ResolvedIntent, error)) {
 	p.matrixIntentResolver = fn
+}
+
+// SetMatrixCompletion 注入矩阵完成门禁。
+func (p *Planner) SetMatrixCompletion(pending func() (int, int, error), seed func() (int, error)) {
+	p.matrixPending = pending
+	p.matrixSeed = seed
 }
 
 // SetSteerWork wires the engine's per-work steering callback so the planner's
@@ -389,6 +397,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	tsx.killWork = p.killWork         // enable kill_work tool (nil = unavailable)
 	tsx.SetMatrixGuard(p.matrixGuard) // 二开：矩阵补派守卫
 	tsx.SetMatrixIntentResolver(p.matrixIntentResolver)
+	tsx.SetMatrixCompletion(p.matrixPending, p.matrixSeed)
 	tsx.steerWork = p.steerWork // enable steer_work tool (nil = unavailable)
 	if origin, _ := ts.OriginFactID(); origin > 0 {
 		tsx.SetOwnerNode(origin) // planner-side anchors default to the task root (origin fact)
