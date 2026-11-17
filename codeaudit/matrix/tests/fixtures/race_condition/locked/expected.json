@@ -1,0 +1,8 @@
+{
+  "vulnclass": "race_condition",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "POST", "url": "/api/stock/deduct", "state": "possible",
+     "subtype": "lock-present", "gaps": []}
+  ]
+}

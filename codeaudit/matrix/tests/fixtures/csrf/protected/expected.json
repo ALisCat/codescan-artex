@@ -1,0 +1,8 @@
+{
+  "vulnclass": "csrf",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "POST", "url": "/api/account/update", "state": "possible",
+     "subtype": "csrf-protected", "gaps": []}
+  ]
+}

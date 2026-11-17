@@ -1,0 +1,7 @@
+{
+  "vulnclass": "deserialization", "scope": "endpoint",
+  "endpoints": [
+    {"method": "POST", "url": "/api/deserialize/object", "state": "possible",
+     "guards": [{"kind": "guard", "file": "DeserializeController.java"}]}
+  ]
+}

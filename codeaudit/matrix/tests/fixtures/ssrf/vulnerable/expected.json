@@ -1,0 +1,7 @@
+{
+  "vulnclass": "ssrf", "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/fetch/url", "state": "possible",
+     "sites": [{"file": "SsrfController.java"}]}
+  ]
+}

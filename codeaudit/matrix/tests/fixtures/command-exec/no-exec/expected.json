@@ -1,0 +1,6 @@
+{
+  "vulnclass": "command-exec", "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/command/info", "state": "impossible"}
+  ]
+}

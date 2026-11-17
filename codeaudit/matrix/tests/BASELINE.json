@@ -1,0 +1,60 @@
+{
+  "generated_by": "matrix.tests.run_regression",
+  "demos": {
+    "v1": {
+      "labels": 23,
+      "vuln_total": 1,
+      "vuln_possible": 1,
+      "vuln_missing": [],
+      "safe_total": 21,
+      "safe_possible": 20,
+      "unknown_total": 1,
+      "na_total": 1,
+      "na_possible": 0,
+      "false_dispatch": 20,
+      "vuln_recall": 1.0,
+      "safe_dispatch_rate": 0.9524,
+      "na_dispatch_rate": 0.0,
+      "endpoints": 12,
+      "findings": {
+        "possible": 28,
+        "impossible": 143,
+        "unknown": 33,
+        "total": 204
+      }
+    },
+    "v2": {
+      "labels": 23,
+      "vuln_total": 10,
+      "vuln_possible": 10,
+      "vuln_missing": [],
+      "safe_total": 12,
+      "safe_possible": 11,
+      "unknown_total": 1,
+      "na_total": 1,
+      "na_possible": 0,
+      "false_dispatch": 11,
+      "vuln_recall": 1.0,
+      "safe_dispatch_rate": 0.9167,
+      "na_dispatch_rate": 0.0,
+      "endpoints": 12,
+      "findings": {
+        "possible": 27,
+        "impossible": 143,
+        "unknown": 34,
+        "total": 204
+      }
+    },
+    "fresh-clinic": {
+      "labels": 0,
+      "note": "no label file; matrix summary only",
+      "endpoints": 10,
+      "findings": {
+        "possible": 22,
+        "impossible": 144,
+        "unknown": 4,
+        "total": 170
+      }
+    }
+  }
+}

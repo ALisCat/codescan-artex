@@ -1,0 +1,8 @@
+{
+  "vulnclass": "open_redirect",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/redirect/go", "state": "possible",
+     "subtype": "redirect-allowlisted", "gaps": []}
+  ]
+}

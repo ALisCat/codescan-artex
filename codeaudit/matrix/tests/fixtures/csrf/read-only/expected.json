@@ -1,0 +1,8 @@
+{
+  "vulnclass": "csrf",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/account/profile", "state": "impossible",
+     "subtype": "not-state-changing"}
+  ]
+}

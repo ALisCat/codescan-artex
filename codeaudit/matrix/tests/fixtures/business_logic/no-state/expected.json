@@ -1,0 +1,8 @@
+{
+  "vulnclass": "business_logic",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/order/list", "state": "impossible",
+     "subtype": "not-business-logic"}
+  ]
+}

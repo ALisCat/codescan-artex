@@ -1,0 +1,6 @@
+{
+  "vulnclass": "path-traversal", "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/file/config", "state": "impossible"}
+  ]
+}

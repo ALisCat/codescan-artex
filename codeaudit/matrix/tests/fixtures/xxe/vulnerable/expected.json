@@ -1,0 +1,9 @@
+{
+  "vulnclass": "xxe",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "POST", "url": "/api/xml/parse", "state": "possible",
+     "subtype": "xxe-unhardened", "cwe": ["CWE-611"],
+     "sites": [{"file": "XmlController.java"}]}
+  ]
+}

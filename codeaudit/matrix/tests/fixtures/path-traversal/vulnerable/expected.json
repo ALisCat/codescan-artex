@@ -1,0 +1,7 @@
+{
+  "vulnclass": "path-traversal", "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/file/read", "state": "possible",
+     "sites": [{"file": "FileController.java"}]}
+  ]
+}

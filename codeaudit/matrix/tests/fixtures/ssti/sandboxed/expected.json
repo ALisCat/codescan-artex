@@ -1,0 +1,8 @@
+{
+  "vulnclass": "ssti",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "POST", "url": "/api/template/eval", "state": "possible",
+     "subtype": "template-sandboxed", "gaps": []}
+  ]
+}

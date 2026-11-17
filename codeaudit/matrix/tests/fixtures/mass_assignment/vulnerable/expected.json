@@ -1,0 +1,10 @@
+{
+  "vulnclass": "mass_assignment",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "POST", "url": "/api/user/update", "state": "possible",
+     "subtype": "mass-assignment", "cwe": ["CWE-915"],
+     "gaps": ["sensitive_fields_bindable"],
+     "sites": [{"file": "UserController.java"}]}
+  ]
+}

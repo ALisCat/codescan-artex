@@ -1,0 +1,10 @@
+{
+  "vulnclass": "open_redirect",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/redirect/go", "state": "possible",
+     "subtype": "open-redirect", "cwe": ["CWE-601"],
+     "gaps": ["redirect_target_not_allowlisted"],
+     "sites": [{"file": "RedirectController.java"}]}
+  ]
+}

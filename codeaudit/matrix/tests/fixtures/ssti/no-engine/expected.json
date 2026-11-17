@@ -1,0 +1,8 @@
+{
+  "vulnclass": "ssti",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "POST", "url": "/api/template/echo", "state": "impossible",
+     "subtype": "no-template-expression"}
+  ]
+}

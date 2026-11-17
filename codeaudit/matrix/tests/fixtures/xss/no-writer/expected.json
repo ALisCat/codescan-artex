@@ -1,0 +1,6 @@
+{
+  "vulnclass": "xss", "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/xss/info", "state": "impossible"}
+  ]
+}

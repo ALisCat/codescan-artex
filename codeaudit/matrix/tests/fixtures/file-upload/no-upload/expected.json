@@ -1,0 +1,6 @@
+{
+  "vulnclass": "file-upload", "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/upload/info", "state": "impossible"}
+  ]
+}

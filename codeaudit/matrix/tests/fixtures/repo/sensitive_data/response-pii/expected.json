@@ -1,0 +1,4 @@
+{
+  "vulnclass": "sensitive_data", "scope": "repo", "state": "possible",
+  "subtype": "pii-log-or-response", "sites": [{"file": "ExportController.java"}]
+}

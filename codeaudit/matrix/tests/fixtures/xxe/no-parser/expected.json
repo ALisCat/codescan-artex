@@ -1,0 +1,8 @@
+{
+  "vulnclass": "xxe",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "POST", "url": "/api/plain/echo", "state": "impossible",
+     "subtype": "no-xml-parser"}
+  ]
+}

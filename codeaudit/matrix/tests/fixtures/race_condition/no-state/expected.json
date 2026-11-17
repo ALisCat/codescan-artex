@@ -1,0 +1,8 @@
+{
+  "vulnclass": "race_condition",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/stock/list", "state": "impossible",
+     "subtype": "not-contended-state"}
+  ]
+}

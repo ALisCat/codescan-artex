@@ -1,0 +1,10 @@
+{
+  "vulnclass": "business_logic",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "POST", "url": "/api/order/pay", "state": "possible",
+     "subtype": "amount_from_request", "cwe": ["CWE-840", "CWE-862"],
+     "gaps": ["amount_from_request", "status_from_request", "order_not_bound_to_principal"],
+     "sites": [{"file": "OrderController.java"}]}
+  ]
+}

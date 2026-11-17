@@ -1,0 +1,10 @@
+{
+  "vulnclass": "race_condition",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "POST", "url": "/api/stock/deduct", "state": "possible",
+     "subtype": "race-condition", "cwe": ["CWE-362"],
+     "gaps": ["lock_or_idempotency_missing"],
+     "sites": [{"file": "StockController.java"}]}
+  ]
+}

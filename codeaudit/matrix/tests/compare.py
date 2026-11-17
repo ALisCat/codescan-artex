@@ -5,9 +5,6 @@
 不比较完整 JSON。只比较会影响矩阵派发的字段：
 state / subtype / CWE / gaps / 关键 file:line / guards / missing。
 """
-import re
-
-
 def _norm(s):
     return str(s or "").replace("\\", "/").lower()
 
@@ -40,10 +37,10 @@ def _actual_sites(finding):
 
 def _actual_gaps(finding):
     ev = finding.get("evidence") or {}
-    for key in ("authz_model", "authn_model", "repo_model"):
-        model = ev.get(key)
-        if isinstance(model, dict):
-            return model.get("gaps") or []
+    # authz_model / authn_model / csrf_model / xxe_model / ...
+    for key, value in ev.items():
+        if key.endswith("_model") and isinstance(value, dict):
+            return value.get("gaps") or []
     return ev.get("gaps") or []
 
 

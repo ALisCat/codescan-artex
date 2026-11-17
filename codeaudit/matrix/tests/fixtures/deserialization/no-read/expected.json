@@ -1,0 +1,6 @@
+{
+  "vulnclass": "deserialization", "scope": "endpoint",
+  "endpoints": [
+    {"method": "POST", "url": "/api/deserialize/echo", "state": "impossible"}
+  ]
+}

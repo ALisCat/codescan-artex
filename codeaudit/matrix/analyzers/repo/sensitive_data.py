@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """仓库级 sensitive-data：日志/响应中直接出现 PII。"""
+import re
+
 from ..base import Analyzer
 from .common import scan_text, repo_finding
 
@@ -22,6 +24,10 @@ class SensitiveDataAnalyzer(Analyzer):
         for s in sites:
             k = (s.get("file"), s.get("line"), s.get("kind"))
             if k in seen:
+                continue
+            line_text = ctx.read(s.get("file"), s.get("line"), s.get("line"))
+            if line_text and re.search(
+                    r"(?i)(mask\s*\(|desensitize|desensitise|redact|\*\*\*|@JsonIgnore)", line_text):
                 continue
             seen.add(k); uniq.append(s)
         if not uniq:

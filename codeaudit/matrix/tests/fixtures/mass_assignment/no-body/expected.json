@@ -1,0 +1,8 @@
+{
+  "vulnclass": "mass_assignment",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/user/profile", "state": "impossible",
+     "subtype": "no-body-binding"}
+  ]
+}

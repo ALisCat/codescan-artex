@@ -1,0 +1,8 @@
+{
+  "vulnclass": "mass_assignment",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "POST", "url": "/api/user/update", "state": "possible",
+     "subtype": "binding-allowlisted", "gaps": []}
+  ]
+}

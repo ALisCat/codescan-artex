@@ -1,0 +1,10 @@
+{
+  "vulnclass": "ldap_injection",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "POST", "url": "/api/ldap/search", "state": "possible",
+     "subtype": "ldap-injection", "cwe": ["CWE-90"],
+     "gaps": ["ldap_filter_not_escaped"],
+     "sites": [{"file": "LdapController.java"}]}
+  ]
+}

@@ -5,10 +5,10 @@ from ..base import Analyzer
 from .common import scan_text, repo_finding
 
 PATTERNS = [
-    r"(?i)fastjson.{0,80}1\.2\.(?:[0-7]\d|8[0-2])",
-    r"(?i)commons-httpclient",
-    r"(?i)log4j-core.{0,80}2\.(?:[0-9]|1[0-6])\.",
-    r"(?i)shiro-core.{0,80}1\.[0-9]",
+    r"(?is)fastjson.{0,160}1\.2\.(?:[0-7]\d|8[0-2])",
+    r"(?is)commons-httpclient",
+    r"(?is)log4j-core.{0,160}2\.(?:[0-9]|1[0-6])\.",
+    r"(?is)shiro-core.{0,160}1\.[0-9]",
 ]
 
 

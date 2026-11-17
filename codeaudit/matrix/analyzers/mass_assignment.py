@@ -13,7 +13,8 @@ SENSITIVE = [
     re.compile(r"(?i)(private|public)\s+\w+\s+(role|roles|tenantId|hospId|orgId|status|enabled|admin|permission|isAdmin|password)\b"),
 ]
 SAFE = [
-    re.compile(r"(?i)(@JsonIgnore|@JsonProperty\(access\s*=\s*Access\.READ_ONLY|DTO|RequestVO|Command)"),
+    # 不要把任意 DTO/RequestVO 当安全：敏感字段恰好可能就在 DTO 上。
+    re.compile(r"(?i)(@JsonIgnore|@JsonProperty\(access\s*=\s*Access\.READ_ONLY|ReadOnly)"),
 ]
 CANDIDATE = re.compile(r"(?i)(admin|user|role|profile|config|update|create|save)")
 

@@ -1,0 +1,4 @@
+{
+  "vulnclass": "dependency", "scope": "repo", "state": "possible",
+  "subtype": "known-vulnerable-dependency", "sites": [{"file": "pom.xml"}]
+}

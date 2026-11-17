@@ -1,0 +1,8 @@
+{
+  "vulnclass": "open_redirect",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/redirect/info", "state": "impossible",
+     "subtype": "no-user-controlled-redirect"}
+  ]
+}

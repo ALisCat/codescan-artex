@@ -1,0 +1,9 @@
+{
+  "vulnclass": "csrf",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "POST", "url": "/api/account/update", "state": "possible",
+     "subtype": "csrf-missing", "cwe": ["CWE-352"], "gaps": ["csrf_token_missing"],
+     "sites": [{"file": "AccountController.java"}]}
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "vulnclass": "ldap_injection",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "POST", "url": "/api/ldap/search", "state": "possible",
+     "subtype": "ldap-escaped", "gaps": []}
+  ]
+}

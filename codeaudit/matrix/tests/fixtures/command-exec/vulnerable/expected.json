@@ -1,0 +1,7 @@
+{
+  "vulnclass": "command-exec", "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/command/run", "state": "possible",
+     "sites": [{"file": "CommandController.java"}]}
+  ]
+}

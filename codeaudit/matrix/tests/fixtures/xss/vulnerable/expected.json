@@ -1,0 +1,7 @@
+{
+  "vulnclass": "xss", "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/xss/echo", "state": "possible",
+     "sites": [{"file": "XssController.java"}]}
+  ]
+}

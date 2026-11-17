@@ -1,0 +1,7 @@
+{
+  "vulnclass": "sql-injection", "scope": "endpoint",
+  "endpoints": [
+    {"method": "GET", "url": "/api/sql/query", "state": "possible",
+     "guards": [{"kind": "guard", "file": "SqlController.java"}]}
+  ]
+}

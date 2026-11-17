@@ -1,0 +1,10 @@
+{
+  "vulnclass": "ssti",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "POST", "url": "/api/template/eval", "state": "possible",
+     "subtype": "ssti", "cwe": ["CWE-94"],
+     "gaps": ["template_expression_not_sandboxed"],
+     "sites": [{"file": "TemplateController.java"}]}
+  ]
+}

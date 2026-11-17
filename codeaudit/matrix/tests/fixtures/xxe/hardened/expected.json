@@ -1,0 +1,8 @@
+{
+  "vulnclass": "xxe",
+  "scope": "endpoint",
+  "endpoints": [
+    {"method": "POST", "url": "/api/xml/parse", "state": "possible",
+     "subtype": "xxe-hardened", "gaps": []}
+  ]
+}

@@ -1,0 +1,4 @@
+{
+  "vulnclass": "crypto", "scope": "repo", "state": "possible",
+  "subtype": "weak-or-hardcoded-crypto", "sites": [{"file": "Crypto.java"}]
+}

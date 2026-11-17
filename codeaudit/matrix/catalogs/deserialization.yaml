@@ -8,6 +8,6 @@ sinks:
   - 'Hessian|Kryo'
   - 'new\s+Yaml\s*\(|Yaml\s*\('
 guards:
-  - 'SafeMode|setEnabledDefaultTyping|allowlist|Whitelist|blacklist|ClassFilter'
+  - 'SafeMode|setEnabledDefaultTyping|allowlist|Whitelist|blacklist|ClassFilter|ObjectInputFilter|setObjectInputFilter'
 input:
   any: true
