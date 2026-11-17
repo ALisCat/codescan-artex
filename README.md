@@ -353,6 +353,18 @@ planner add_intent(IntentSpec)
 
 > 这些是矩阵规则迭代期的内部结果，不是对所有代码库的准确率承诺。最新规则仍需按 [`codeaudit/demo/EVAL-PROTOCOL.md`](codeaudit/demo/EVAL-PROTOCOL.md) 重新跑 holdout。
 
+当前回归入口：
+
+```bash
+cd codeaudit
+python3 -m matrix.tests.run_all
+```
+
+- 72 个分析器 fixture，覆盖 21 类分析器；
+- demo v1/v2/fresh-clinic 回归；
+- `BASELINE.json` 记录基线，`--check` 检测回归；
+- 不依赖 PostgreSQL、不调用 LLM。
+
 评测源码上传前请使用：
 
 ```bash
