@@ -1037,6 +1037,66 @@ export interface Settings {
   notify_enabled?: boolean; // 推送总开关，默认开；用于维护期一键止血
   notify_public_base_url?: string; // 漏洞详情回链的外部访问地址；空=消息不带回链
   notify_digest_interval_min?: number; // 汇总模式周期（分钟），默认 30
+  // GitLab 代码源。token 只写不读，读取时只返回 token_set / hint。
+  gitlab_base_url?: string;
+  gitlab_token_set?: boolean;
+  gitlab_token_hint?: string;
+  gitlab_verified_user?: string;
+  gitlab_verified_at?: string;
+  gitlab_configured?: boolean;
+  gitlab_token?: string; // write-only: PUT 时设置/清空
+}
+
+// ---- GitLab 项目 ----
+
+export interface GitLabProject {
+  id: number;
+  path_with_namespace: string;
+  name: string;
+  default_branch: string;
+  web_url: string;
+  http_url_to_repo?: string;
+  last_activity_at?: string;
+}
+
+export interface CodeProject {
+  id: number;
+  name: string;
+  path: string;
+  gitlab_project_id: number;
+  web_url: string;
+  default_branch: string;
+  last_seen_commit: string;
+  last_audited_commit: string;
+  last_checked_at?: string;
+  last_check_error: string;
+  status: string;
+  created_by?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GitLabTestResult {
+  ok: boolean;
+  error?: string;
+  base_url?: string;
+  username?: string;
+  name?: string;
+  id?: number;
+}
+
+export interface ProjectAuditRun {
+  id: number;
+  project_id: number;
+  mode: "full" | "incremental";
+  base_commit: string;
+  target_commit: string;
+  task_id?: number | null;
+  status: "fetching" | "ready" | "failed" | string;
+  error_message: string;
+  created_by?: number | null;
+  created_at: string;
+  updated_at: string;
 }
 
 // ---- 漏洞 IM 推送 ----

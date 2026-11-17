@@ -2,7 +2,16 @@
 
 import * as React from "react";
 
-import { CpuIcon, FlaskConicalIcon, KeyboardIcon, RadioTowerIcon, SearchIcon, ShieldAlertIcon } from "lucide-react";
+import {
+  CpuIcon,
+  FlaskConicalIcon,
+  GitBranchIcon,
+  KeyboardIcon,
+  Loader2Icon,
+  RadioTowerIcon,
+  SearchIcon,
+  ShieldAlertIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -43,6 +52,15 @@ export default function SystemSettingsPage() {
   const [injectWorker, setInjectWorker] = React.useState(true);
   // 实验功能:noa 上下文压缩(默认关)。
   const [noaCompaction, setNoaCompaction] = React.useState(false);
+  // GitLab 系统级连接。Token 只写不读：已配置时只显示 hint，输入框留空表示不改。
+  const [gitlabBaseURL, setGitLabBaseURL] = React.useState("https://gitlab.healthan.net");
+  const [gitlabTokenSet, setGitlabTokenSet] = React.useState(false);
+  const [gitlabTokenHint, setGitlabTokenHint] = React.useState("");
+  const [gitlabTokenInput, setGitlabTokenInput] = React.useState("");
+  const [gitlabVerifiedUser, setGitlabVerifiedUser] = React.useState("");
+  const [gitlabVerifiedAt, setGitlabVerifiedAt] = React.useState("");
+  const [savingGitLab, setSavingGitLab] = React.useState(false);
+  const [testingGitLab, setTestingGitLab] = React.useState(false);
   // 纯前端偏好：不走 /api/settings，直接读写 localStorage。
   const sendMode = useChatSendMode();
 
@@ -60,6 +78,12 @@ export default function SystemSettingsPage() {
     setInjectPlanner(s.constraints_inject_planner !== false);
     setInjectWorker(s.constraints_inject_worker !== false);
     setNoaCompaction(!!s.noa_compaction);
+    setGitLabBaseURL(s.gitlab_base_url || "https://gitlab.healthan.net");
+    setGitlabTokenSet(!!s.gitlab_token_set);
+    setGitlabTokenHint(s.gitlab_token_hint || "");
+    setGitlabVerifiedUser(s.gitlab_verified_user || "");
+    setGitlabVerifiedAt(s.gitlab_verified_at || "");
+    setGitlabTokenInput("");
   }, []);
 
   const saveWorkers = () => {
@@ -232,6 +256,57 @@ export default function SystemSettingsPage() {
       .finally(() => setSavingGlobalProxy(false));
   };
 
+  const saveGitLab = () => {
+    const base = gitlabBaseURL.trim();
+    if (!base) {
+      toast.error("请填写 GitLab 地址");
+      return;
+    }
+    setSavingGitLab(true);
+    api
+      .setSettings({
+        gitlab_base_url: base,
+        ...(gitlabTokenInput.trim() ? { gitlab_token: gitlabTokenInput.trim() } : {}),
+      })
+      .then((s) => {
+        apply(s);
+        toast.success(gitlabTokenInput.trim() ? "已保存 GitLab 地址和 Token" : "已保存 GitLab 地址");
+      })
+      .catch((e) => toast.error("保存 GitLab 配置失败：" + (e as Error).message))
+      .finally(() => setSavingGitLab(false));
+  };
+
+  const testGitLab = () => {
+    setTestingGitLab(true);
+    api
+      .testGitLab({
+        gitlab_base_url: gitlabBaseURL.trim(),
+        ...(gitlabTokenInput.trim() ? { gitlab_token: gitlabTokenInput.trim() } : {}),
+      })
+      .then((r) => {
+        if (r.ok) {
+          setGitlabVerifiedUser(r.username || "");
+          toast.success(`GitLab 连接成功 · ${r.username || "已验证"}`);
+        } else {
+          toast.error("GitLab 连接失败：" + (r.error || "未知错误"));
+        }
+      })
+      .catch((e) => toast.error("GitLab 连接失败：" + (e as Error).message))
+      .finally(() => setTestingGitLab(false));
+  };
+
+  const clearGitLabToken = () => {
+    setSavingGitLab(true);
+    api
+      .setSettings({ gitlab_token: "" })
+      .then((s) => {
+        apply(s);
+        toast.success("已清除 GitLab Token");
+      })
+      .catch((e) => toast.error("清除 GitLab Token 失败：" + (e as Error).message))
+      .finally(() => setSavingGitLab(false));
+  };
+
   // Run a real "test" search ("test") against the CURRENT form values (backend +
   // proxy + entered key), falling back to saved values server-side. Toasts result.
   const runTest = () => {
@@ -267,6 +342,65 @@ export default function SystemSettingsPage() {
           column-gap 只管列间距，行间距要由子元素自己给。 */}
       <div className="columns-1 gap-4 md:gap-6 lg:columns-2">
         <UpdateCard />
+
+        <Card className="mb-4 break-inside-avoid md:mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <GitBranchIcon className="size-4" />
+              GitLab 代码源
+            </CardTitle>
+            <CardDescription>
+              系统级 GitLab 连接，供「项目」模块读取默认分支、检查更新和后续拉取源码。
+              Token 只用于服务端请求，不会回显到前端。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="gitlab-base-url">GitLab 地址</Label>
+              <Input
+                id="gitlab-base-url"
+                value={gitlabBaseURL}
+                onChange={(e) => setGitLabBaseURL(e.target.value)}
+                placeholder="https://gitlab.example.com"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="gitlab-token">Personal Access Token</Label>
+              <Input
+                id="gitlab-token"
+                type="password"
+                autoComplete="off"
+                value={gitlabTokenInput}
+                onChange={(e) => setGitlabTokenInput(e.target.value)}
+                placeholder={gitlabTokenSet ? `已配置 ${gitlabTokenHint}，留空不修改` : "glpat-..."}
+              />
+              <div className="text-muted-foreground text-xs">
+                建议 scope：read_api + read_repository；建议使用专用 service account。
+                {gitlabVerifiedUser && (
+                  <span className="ml-1 text-emerald-600 dark:text-emerald-400">
+                    已验证：{gitlabVerifiedUser}
+                    {gitlabVerifiedAt ? ` @ ${gitlabVerifiedAt}` : ""}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" onClick={saveGitLab} disabled={savingGitLab}>
+                {savingGitLab ? <Loader2Icon className="size-4 animate-spin" /> : null}
+                保存
+              </Button>
+              <Button size="sm" variant="outline" onClick={testGitLab} disabled={testingGitLab}>
+                {testingGitLab ? <Loader2Icon className="size-4 animate-spin" /> : null}
+                测试连接
+              </Button>
+              {gitlabTokenSet && (
+                <Button size="sm" variant="ghost" onClick={clearGitLabToken} disabled={savingGitLab}>
+                  清除 Token
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
 
         <Card className="mb-4 break-inside-avoid md:mb-6">
           <CardHeader>

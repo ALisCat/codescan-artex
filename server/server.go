@@ -163,6 +163,8 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	s.recoverInterruptedGithubImports()
 	// staging 回收：未消费的上传会一直占着磁盘，且用户永远不会再看到它。
 	s.startUploadJanitor()
+	// 每天只检查项目默认分支 HEAD，不自动下载源码、不自动建审计任务。
+	s.startGitLabProjectChecker()
 	// 把旧版「单账号 + 单一密码」迁移成第一个管理员账号（仅当还没有任何账号时）。
 	s.migrateLegacyAdmin()
 	// 熔断阈值/冷却是失败路径上的热参数，启动时把全局重试策略推给 Registry 一次；
@@ -871,6 +873,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/llm/records/{id}", s.pgGetLLMRecord)
 	mux.HandleFunc("GET /api/settings", s.getSettings)
 	mux.HandleFunc("PUT /api/settings", s.putSettings)
+	// GitLab 代码源与项目模块。连接配置/写操作先按管理员收口；项目列表与详情
+	// 暂时对所有已登录账号可见，后续接入平台权限模型再收敛。
+	mux.HandleFunc("POST /api/settings/gitlab/test", s.requireAdmin(s.testGitLab))
+	mux.HandleFunc("GET /api/gitlab/projects", s.requireAdmin(s.gitlabListProjects))
+	mux.HandleFunc("GET /api/projects", s.listProjects)
+	mux.HandleFunc("POST /api/projects", s.requireAdmin(s.createProject))
+	mux.HandleFunc("GET /api/projects/{id}", s.getProject)
+	mux.HandleFunc("POST /api/projects/{id}/check", s.requireAdmin(s.checkProject))
+	mux.HandleFunc("DELETE /api/projects/{id}", s.requireAdmin(s.deleteProject))
+	mux.HandleFunc("POST /api/projects/{id}/audit", s.requireAdmin(s.startProjectAudit))
+	mux.HandleFunc("GET /api/projects/{id}/audits", s.listProjectAudits)
+	mux.HandleFunc("GET /api/projects/{id}/audits/{runID}", s.getProjectAudit)
 	// 漏洞 IM 推送。渠道是「多实例 + 各自过滤规则」的资源，因此独立成一组
 	// REST 接口，而不是塞进扁平的 /api/settings 键值里。
 	mux.HandleFunc("GET /api/notify/meta", s.notifyMeta)
@@ -3518,7 +3532,7 @@ func (s *Server) settingsPayload() map[string]any {
 	if concLimit == 0 {
 		concLimit = defaultConcurrencyLimit // 关闭时也回显一个合理默认值给 UI
 	}
-	return map[string]any{
+	out := map[string]any{
 		"traffic_capture":          s.m.TrafficEnabled(),
 		"agent_traffic_binding":    s.m.pg.GetBool(settingAgentTrafficBinding, false),
 		"llm_record":               s.m.LLMRecordEnabled(),
@@ -3548,6 +3562,10 @@ func (s *Server) settingsPayload() map[string]any {
 		"notify_public_base_url":     notifyPublicBaseURL(s.m.pg),
 		"notify_digest_interval_min": notifyDigestIntervalMin(s.m.pg),
 	}
+	for k, v := range s.gitlabSettingsPayload() {
+		out[k] = v
+	}
+	return out
 }
 
 // notifyPublicBaseURL 读推送回链用的外部地址。
@@ -3619,6 +3637,10 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		NotifyEnabled    *bool   `json:"notify_enabled"`
 		NotifyBaseURL    *string `json:"notify_public_base_url"`
 		NotifyDigestMins *int    `json:"notify_digest_interval_min"`
+		// GitLab 代码源。Token 只写不读；空字符串表示清除。地址只保存 origin，
+		// 不接受任意项目 URL，避免把系统级凭据发到非配置主机。
+		GitLabBaseURL *string `json:"gitlab_base_url"`
+		GitLabToken   *string `json:"gitlab_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, 400, err.Error())
@@ -3738,6 +3760,27 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 500, err.Error())
 			return
 		}
+	}
+	if req.GitLabBaseURL != nil {
+		base, err := normalizeGitLabBaseURL(*req.GitLabBaseURL)
+		if err != nil {
+			writeErr(w, 400, err.Error())
+			return
+		}
+		if err := s.m.pg.SetSetting(settingGitLabBaseURL, base); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		_ = s.m.pg.SetSetting(settingGitLabUser, "")
+		_ = s.m.pg.SetSetting(settingGitLabVerifiedAt, "")
+	}
+	if req.GitLabToken != nil {
+		if err := s.m.pg.SetSetting(settingGitLabToken, strings.TrimSpace(*req.GitLabToken)); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		_ = s.m.pg.SetSetting(settingGitLabUser, "")
+		_ = s.m.pg.SetSetting(settingGitLabVerifiedAt, "")
 	}
 	if req.TrafficCapture != nil {
 		if err := s.m.SetTrafficEnabled(*req.TrafficCapture); err != nil {

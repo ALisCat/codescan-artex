@@ -75,6 +75,10 @@ import type {
   PromptVersion,
   SessionTokenUsage,
   Settings,
+  CodeProject,
+  GitLabProject,
+  GitLabTestResult,
+  ProjectAuditRun,
   Severity,
   SkillCall,
   SkillItem,
@@ -1116,6 +1120,25 @@ export const api = {
     brave_search_api_key?: string;
     tavily_search_api_key?: string;
   }) => post<{ ok: boolean; error?: string; count?: number; backend?: string }>(`/settings/web-search/test`, patch),
+
+  // ---- GitLab 代码源 / 项目 ----
+  testGitLab: (patch: { gitlab_base_url?: string; gitlab_token?: string }) =>
+    post<GitLabTestResult>(`/settings/gitlab/test`, patch),
+  gitlabProjects: (q = "") =>
+    get<{ projects: GitLabProject[] | null; page: number }>(
+      `/gitlab/projects${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`,
+    ).then((r) => arr(r.projects)),
+  projects: () => get<{ projects: CodeProject[] | null }>(`/projects`).then((r) => arr(r.projects)),
+  project: (id: number) => get<CodeProject>(`/projects/${id}`),
+  createProject: (payload: { path: string; gitlab_project_id?: number }) =>
+    post<CodeProject>(`/projects`, payload),
+  checkProject: (id: number) => post<CodeProject>(`/projects/${id}/check`),
+  deleteProject: (id: number) => del<{ ok: boolean }>(`/projects/${id}`),
+  startProjectAudit: (id: number, mode: "full" | "incremental" = "full") =>
+    post<{ audit: ProjectAuditRun; upload_id: string; state: string }>(`/projects/${id}/audit`, { mode }),
+  projectAudits: (id: number) =>
+    get<{ audits: ProjectAuditRun[] | null }>(`/projects/${id}/audits`).then((r) => arr(r.audits)),
+  projectAudit: (id: number, runID: number) => get<ProjectAuditRun>(`/projects/${id}/audits/${runID}`),
 
   // ---- 漏洞 IM 推送 ----
   // 渠道是多实例资源（同一类型可配多个机器人、各有过滤规则），因此独立成组，

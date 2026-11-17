@@ -6,6 +6,7 @@ import {
   Bug,
   Building2,
   ClipboardCheck,
+  FolderGit2,
   FolderOpen,
   FolderSync,
   LayoutDashboard,
@@ -80,6 +81,7 @@ export const sidebarItems: NavGroup[] = [
     items: [
       { id: "dashboard", title: "仪表盘", url: "/dashboard", icon: LayoutDashboard },
       { id: "chat", title: "对话", url: "/chat", icon: MessageSquare, requires: "can_chat" },
+      { id: "projects", title: "项目", url: "/function/projects", icon: FolderGit2 },
       { id: "tasks", title: "任务", url: "/function/tasks", icon: Target },
       { id: "findings", title: "发现", url: "/function/findings", icon: Bug },
       { id: "llm-records", title: "LLM 录制", url: "/function/llm-records", icon: Radio, adminOnly: true },

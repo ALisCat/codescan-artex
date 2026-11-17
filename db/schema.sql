@@ -1595,3 +1595,41 @@ DROP TRIGGER IF EXISTS trg_task_dependencies_upd ON task_dependencies;
 CREATE TRIGGER trg_task_dependencies_upd BEFORE UPDATE ON task_dependencies
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+
+-- =====================================================================
+-- 代码源项目管理（GitLab 优先）
+-- =====================================================================
+-- 项目是长期对象；审计运行仍然落到 tasks。这里只保存代码源元数据和同步状态。
+CREATE TABLE IF NOT EXISTS code_projects (
+    id                  BIGSERIAL PRIMARY KEY,
+    name                TEXT NOT NULL,
+    path                TEXT NOT NULL UNIQUE,
+    gitlab_project_id   BIGINT NOT NULL DEFAULT 0,
+    web_url             TEXT NOT NULL DEFAULT '',
+    default_branch      TEXT NOT NULL DEFAULT 'main',
+    last_seen_commit    TEXT NOT NULL DEFAULT '',
+    last_audited_commit TEXT NOT NULL DEFAULT '',
+    last_checked_at     TIMESTAMPTZ,
+    last_check_error    TEXT NOT NULL DEFAULT '',
+    status              TEXT NOT NULL DEFAULT 'active',
+    created_by          BIGINT,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_code_projects_updated ON code_projects(updated_at DESC);
+
+-- 项目审计运行：一个 Project 下的全量/增量运行，最终落到 tasks。
+CREATE TABLE IF NOT EXISTS project_audit_runs (
+    id              BIGSERIAL PRIMARY KEY,
+    project_id      BIGINT NOT NULL REFERENCES code_projects(id) ON DELETE CASCADE,
+    mode            TEXT NOT NULL DEFAULT 'full',
+    base_commit     TEXT NOT NULL DEFAULT '',
+    target_commit   TEXT NOT NULL DEFAULT '',
+    task_id         BIGINT,
+    status          TEXT NOT NULL DEFAULT 'fetching',
+    error_message   TEXT NOT NULL DEFAULT '',
+    created_by      BIGINT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_project_audit_runs_project ON project_audit_runs(project_id, id DESC);
