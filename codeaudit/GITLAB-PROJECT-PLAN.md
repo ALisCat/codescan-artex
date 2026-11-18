@@ -1,7 +1,7 @@
 # CodeScan GitLab 项目模块开发计划
 
 > 更新时间：2026-11-17  
-> 状态：阶段 1、分支选择、阶段 2 全量审计、阶段 2.5 增量预览已落地；真正的增量审计待接入。
+> 状态：阶段 1、分支选择、阶段 2 全量审计、阶段 2.5 增量预览已落地；已阅基线与真正的增量审计待接入。
 
 ## 1. 目标
 
@@ -37,7 +37,8 @@
 - `path`、`gitlab_project_id`、`web_url`、`default_branch`；
 - `tracked_branch`：项目实际跟踪/审计的分支；唯一键为 `(path, tracked_branch)`；
 - `last_seen_commit`：最近一次检查到的目标分支 HEAD；
-- `last_audited_commit`：最近一次成功全量/增量的目标 commit；
+- `last_audited_commit`：最近一次成功全量/增量的目标 commit；只有任务 done 后由 reconciler 更新；
+- `last_reviewed_commit`（待开发）：最近一次人工“已阅、本次不审计”的 commit；
 - `last_checked_at`、`last_check_error`、`status`；
 - 创建者、创建/更新时间。
 
@@ -80,7 +81,7 @@ DELETE /api/projects/{id}             删除项目（管理员）
 - 复用 `task_uploads` staging + 解压逻辑；
 - 源码绑定后自动运行矩阵流水线（graph → analyzers → bind → import），导入 `ca_cells` 并生成矩阵意图，然后再启动 Task；
 - 创建项目审计运行和 Task，自动绑定源码并开跑；
-- 成功后更新 `last_audited_commit`；
+- 任务真正结束后由项目审计 reconciler 更新 `last_audited_commit`；
 - 同一项目同一时间只允许一个准备中的运行；
 - 增量请求明确返回 501，不静默降级为全量；
 - 矩阵分析器目录通过 `ARTEX_CODEAUDIT_DIR` 或 `src/codeaudit` 自动定位；矩阵生成失败时审计运行失败，不静默退回标准 planner。
@@ -91,6 +92,44 @@ DELETE /api/projects/{id}             删除项目（管理员）
 - `status`（fetching / ready / failed）、`error_message`；
 - 项目详情可轮询运行状态并跳转任务。
 
+### 2.7 已阅基线与审计缺口（待开发）
+
+“已阅”只表示安全工程师看过并决定暂不审计，不等于已审计，也不产生安全结论。
+
+新增字段：
+
+- `last_reviewed_commit`：最近一次人工已阅的 commit；
+- `last_reviewed_at`、`last_reviewed_by`；
+- `last_review_note`：可选说明/原因。
+
+接口：
+
+```text
+POST /api/projects/{id}/review
+```
+
+行为：
+
+- 校验提交的 commit 与当前 `tracked_branch` HEAD 一致；
+- 只更新 `last_reviewed_commit`，不更新 `last_audited_commit`；
+- 记录操作人、时间、原因；
+- 不创建任务、不下载源码、不改变矩阵覆盖状态。
+
+预览返回增加：
+
+- `review_base_commit`：上次已阅基线；
+- `review_commits/files`：自上次已阅以来的变更；
+- `audit_gap_commits/files/endpoints`：自上次审计以来未审计的累积变更；
+- `audit_gap` 不能因为“已阅”而消失。
+
+UI：
+
+- 项目详情显示“上次审计基线”和“上次已阅基线”；
+- 增加“本次不审计，标记已阅”按钮；
+- 增加审计缺口提示；
+- 真正增量审计仍以 `last_audited_commit` 为 base，默认覆盖已阅但未审计的变更。
+
+## 3. 待开发
 ## 3. 待开发
 
 ### 阶段 2 剩余验收
@@ -162,7 +201,10 @@ UI：
 - 不下载完整 archive、不创建任务、不启动 LLM；
 - compare 失败时提示回退全量。
 
-### 阶段 3：增量审计
+### 阶段 3：增量审计（待开发）
+
+前置：完成已阅基线与审计缺口。真正的增量审计 base 必须使用 `last_audited_commit`，不能用 `last_reviewed_commit`，否则会跳过已阅但未审计的代码。
+
 
 1. 计算 base：项目最近一次成功审计的 commit；
 2. 无 base、base 非祖先、base 源码不可用时拒绝增量，要求先全量；
