@@ -372,10 +372,10 @@ export default function ProjectsPage() {
       )}
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="overflow-x-hidden sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>添加 GitLab 项目</DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="break-words">
               选择仓库和分支，并给项目起名。分支是项目身份的一部分：同一仓库的
               <code className="mx-1 rounded bg-muted px-1">master</code> 和
               <code className="mx-1 rounded bg-muted px-1">test-branch</code>
@@ -392,10 +392,10 @@ export default function ProjectsPage() {
               填写地址和 Token。
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="min-w-0 space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="project-path">仓库路径</Label>
-                <div className="flex gap-2">
+                <div className="flex min-w-0 gap-2">
                   <Input
                     id="project-path"
                     value={path}
@@ -410,23 +410,23 @@ export default function ProjectsPage() {
                       if (e.key === "Enter") void lookupProject();
                     }}
                   />
-                  <Button type="button" variant="outline" onClick={() => void lookupProject()} disabled={lookupLoading}>
+                  <Button type="button" variant="outline" className="shrink-0" onClick={() => void lookupProject()} disabled={lookupLoading}>
                     {lookupLoading && <Loader2Icon className="size-4 animate-spin" />}
                     解析
                   </Button>
                 </div>
                 {selectedProject && (
-                  <div className="text-muted-foreground text-xs">
+                  <div className="text-muted-foreground min-w-0 break-all text-xs">
                     已解析：{selectedProject.path_with_namespace} · 默认分支 {selectedProject.default_branch || "main"}
                   </div>
                 )}
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-2">
+              <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+                <div className="min-w-0 space-y-2">
                   <Label htmlFor="project-branch">审计分支</Label>
                   <Select value={branch} onValueChange={chooseBranch} disabled={!selectedProject || loadingBranches}>
-                    <SelectTrigger id="project-branch" className="w-full">
+                    <SelectTrigger id="project-branch" className="w-full min-w-0">
                       <SelectValue placeholder={loadingBranches ? "读取分支…" : "先解析项目"} />
                     </SelectTrigger>
                     <SelectContent>
@@ -438,7 +438,7 @@ export default function ProjectsPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
+                <div className="min-w-0 space-y-2">
                   <Label htmlFor="project-name">项目名称</Label>
                   <Input
                     id="project-name"
@@ -481,7 +481,7 @@ export default function ProjectsPage() {
                     className="pl-9"
                   />
                 </div>
-                <div className="max-h-48 overflow-y-auto rounded-lg border">
+                <div className="max-h-48 overflow-x-hidden overflow-y-auto rounded-lg border">
                   {availableError ? (
                     <div className="p-3 text-sm text-red-600 dark:text-red-400">{availableError}</div>
                   ) : loadingAvailable ? (
