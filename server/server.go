@@ -877,6 +877,8 @@ func (s *Server) Handler() http.Handler {
 	// 暂时对所有已登录账号可见，后续接入平台权限模型再收敛。
 	mux.HandleFunc("POST /api/settings/gitlab/test", s.requireAdmin(s.testGitLab))
 	mux.HandleFunc("GET /api/gitlab/projects", s.requireAdmin(s.gitlabListProjects))
+	mux.HandleFunc("GET /api/gitlab/projects/lookup", s.requireAdmin(s.gitlabLookupProject))
+	mux.HandleFunc("GET /api/gitlab/projects/{id}/branches", s.requireAdmin(s.gitlabListBranches))
 	mux.HandleFunc("GET /api/projects", s.listProjects)
 	mux.HandleFunc("POST /api/projects", s.requireAdmin(s.createProject))
 	mux.HandleFunc("GET /api/projects/{id}", s.getProject)

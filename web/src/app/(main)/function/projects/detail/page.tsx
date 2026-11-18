@@ -121,7 +121,7 @@ function DetailInner() {
     try {
       const next = await api.checkProject(p.id);
       setP(next);
-      toast.success(next.last_check_error ? "检查失败：" + next.last_check_error : "已检查默认分支 HEAD");
+      toast.success(next.last_check_error ? "检查失败：" + next.last_check_error : "已检查项目分支 HEAD");
     } catch (e) {
       toast.error("检查失败：" + (e as Error).message);
     } finally {
@@ -154,6 +154,7 @@ function DetailInner() {
 
   const updateAvailable = !!p.last_audited_commit && !!p.last_seen_commit && p.last_seen_commit !== p.last_audited_commit;
   const hasAudit = !!p.last_audited_commit;
+  const trackedBranch = p.tracked_branch || p.default_branch || "main";
   const latestAudit = audits[0];
   const auditBusy = starting || latestAudit?.status === "fetching";
 
@@ -172,7 +173,7 @@ function DetailInner() {
             <span>{p.path}</span>
             <span className="inline-flex items-center gap-1">
               <GitBranchIcon className="size-3.5" />
-              {p.default_branch || "main"}
+              {trackedBranch}
             </span>
             {p.web_url && (
               <a href={p.web_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline">
@@ -209,12 +210,12 @@ function DetailInner() {
               <GitCommitHorizontalIcon className="size-4" />
               分支状态
             </CardTitle>
-            <CardDescription>项目以默认分支为主线；审计运行固定到具体 commit。</CardDescription>
+            <CardDescription>项目绑定仓库和分支；审计运行固定到该分支的具体 commit。</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-lg border p-3">
-                <div className="text-muted-foreground text-xs">默认分支 HEAD</div>
+                <div className="text-muted-foreground text-xs">目标分支 HEAD</div>
                 <div className="mt-1 font-mono text-sm">{shortCommit(p.last_seen_commit)}</div>
                 <div className="text-muted-foreground mt-1 text-xs">检查于 {fmtTime(p.last_checked_at)}</div>
               </div>
@@ -236,7 +237,7 @@ function DetailInner() {
                     : "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
                 }
               >
-                {updateAvailable ? "默认分支有新提交" : hasAudit ? "基线是最新" : "等待首次审计"}
+                {updateAvailable ? "目标分支有新提交" : hasAudit ? "基线是最新" : "等待首次审计"}
               </Badge>
               {p.last_seen_commit && <span className="text-muted-foreground text-xs">target {shortCommit(p.last_seen_commit)}</span>}
             </div>
@@ -286,7 +287,7 @@ function DetailInner() {
               </div>
             )}
             <p className="text-muted-foreground text-xs leading-relaxed">
-              全量审计会下载当前默认分支 commit 的源码、创建任务并自动开跑；固定 commit 便于回溯。
+              全量审计会下载当前分支（{trackedBranch}）commit 的源码、创建任务并自动开跑；固定 commit 便于回溯。
             </p>
           </CardContent>
         </Card>
@@ -299,10 +300,17 @@ function DetailInner() {
             项目信息
           </CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+        <CardContent className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
           <div>
             <div className="text-muted-foreground text-xs">GitLab 项目 ID</div>
             <div className="mt-1 font-mono">{p.gitlab_project_id || "—"}</div>
+          </div>
+          <div>
+            <div className="text-muted-foreground text-xs">目标分支</div>
+            <div className="mt-1 inline-flex items-center gap-1">
+              <GitBranchIcon className="size-3.5" />
+              {trackedBranch}
+            </div>
           </div>
           <div>
             <div className="text-muted-foreground text-xs">状态</div>

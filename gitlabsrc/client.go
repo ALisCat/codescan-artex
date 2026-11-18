@@ -217,6 +217,20 @@ func (c *Client) Project(ctx context.Context, projectID int64, path string) (*Pr
 	return &out, nil
 }
 
+// ListBranches returns up to 100 branches. Projects with more than 100 branches
+// can still be used by typing a branch name; the selector shows the first page.
+func (c *Client) ListBranches(ctx context.Context, projectID int64) ([]Branch, error) {
+	if projectID <= 0 {
+		return nil, fmt.Errorf("GitLab 项目 ID 不能为空")
+	}
+	var out []Branch
+	if err := c.request(ctx, http.MethodGet,
+		fmt.Sprintf("/projects/%d/repository/branches?per_page=100", projectID), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *Client) Branch(ctx context.Context, projectID int64, ref string) (*Branch, error) {
 	if projectID <= 0 || strings.TrimSpace(ref) == "" {
 		return nil, fmt.Errorf("GitLab 项目 ID 和分支不能为空")

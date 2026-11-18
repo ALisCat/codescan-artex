@@ -1059,6 +1059,13 @@ export interface GitLabProject {
   last_activity_at?: string;
 }
 
+export interface GitLabBranch {
+  name: string;
+  commit: {
+    id: string;
+  };
+}
+
 export interface CodeProject {
   id: number;
   name: string;
@@ -1066,6 +1073,7 @@ export interface CodeProject {
   gitlab_project_id: number;
   web_url: string;
   default_branch: string;
+  tracked_branch: string;
   last_seen_commit: string;
   last_audited_commit: string;
   last_checked_at?: string;

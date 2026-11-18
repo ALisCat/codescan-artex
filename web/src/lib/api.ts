@@ -76,6 +76,7 @@ import type {
   SessionTokenUsage,
   Settings,
   CodeProject,
+  GitLabBranch,
   GitLabProject,
   GitLabTestResult,
   ProjectAuditRun,
@@ -1128,9 +1129,15 @@ export const api = {
     get<{ projects: GitLabProject[] | null; page: number }>(
       `/gitlab/projects${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`,
     ).then((r) => arr(r.projects)),
+  gitlabLookupProject: (path: string) =>
+    get<{ project: GitLabProject }>(`/gitlab/projects/lookup?path=${encodeURIComponent(path.trim())}`).then(
+      (r) => r.project,
+    ),
+  gitlabBranches: (id: number) =>
+    get<{ branches: GitLabBranch[] | null }>(`/gitlab/projects/${id}/branches`).then((r) => arr(r.branches)),
   projects: () => get<{ projects: CodeProject[] | null }>(`/projects`).then((r) => arr(r.projects)),
   project: (id: number) => get<CodeProject>(`/projects/${id}`),
-  createProject: (payload: { path: string; gitlab_project_id?: number }) =>
+  createProject: (payload: { path: string; name?: string; branch?: string; gitlab_project_id?: number }) =>
     post<CodeProject>(`/projects`, payload),
   checkProject: (id: number) => post<CodeProject>(`/projects/${id}/check`),
   deleteProject: (id: number) => del<{ ok: boolean }>(`/projects/${id}`),

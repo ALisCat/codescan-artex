@@ -32,8 +32,9 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { api } from "@/lib/api";
-import type { CodeProject, GitLabProject, Settings } from "@/lib/types";
+import type { CodeProject, GitLabBranch, GitLabProject, Settings } from "@/lib/types";
 
 function shortCommit(c: string) {
   return c ? c.slice(0, 8) : "—";
@@ -72,8 +73,15 @@ export default function ProjectsPage() {
   const [addOpen, setAddOpen] = React.useState(false);
   const [q, setQ] = React.useState("");
   const [path, setPath] = React.useState("");
+  const [name, setName] = React.useState("");
+  const [nameTouched, setNameTouched] = React.useState(false);
+  const [branch, setBranch] = React.useState("");
+  const [branches, setBranches] = React.useState<GitLabBranch[]>([]);
+  const [selectedProject, setSelectedProject] = React.useState<GitLabProject | null>(null);
   const [available, setAvailable] = React.useState<GitLabProject[]>([]);
   const [loadingAvailable, setLoadingAvailable] = React.useState(false);
+  const [loadingBranches, setLoadingBranches] = React.useState(false);
+  const [lookupLoading, setLookupLoading] = React.useState(false);
   const [availableError, setAvailableError] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const [checking, setChecking] = React.useState<number | null>(null);
@@ -118,23 +126,93 @@ export default function ProjectsPage() {
   function openAdd() {
     setAddOpen(true);
     setPath("");
+    setName("");
+    setNameTouched(false);
+    setBranch("");
+    setBranches([]);
+    setSelectedProject(null);
     setQ("");
     setAvailable([]);
+    setAvailableError("");
     if (configured) void loadAvailable("");
   }
 
-  async function addProject(projectPath?: string) {
-    const value = (projectPath ?? path).trim();
+  function defaultProjectName(p: GitLabProject, b: string) {
+    return `${p.name} · ${b || p.default_branch || "main"}`;
+  }
+
+  async function loadBranchesFor(p: GitLabProject, preferred?: string, forceName = false) {
+    setLoadingBranches(true);
+    try {
+      const list = await api.gitlabBranches(p.id);
+      setBranches(list);
+      const wanted = (preferred || p.default_branch || list[0]?.name || "").trim();
+      const chosen = list.some((b) => b.name === wanted) ? wanted : list[0]?.name || wanted;
+      setBranch(chosen);
+      if (forceName || !nameTouched) setName(defaultProjectName(p, chosen));
+    } catch (e) {
+      setBranches([]);
+      toast.error("读取分支失败：" + (e as Error).message);
+    } finally {
+      setLoadingBranches(false);
+    }
+  }
+
+  function chooseProject(p: GitLabProject) {
+    setSelectedProject(p);
+    setPath(p.path_with_namespace);
+    setNameTouched(false);
+    setName(defaultProjectName(p, p.default_branch || "main"));
+    setBranch(p.default_branch || "main");
+    void loadBranchesFor(p, p.default_branch, true);
+  }
+
+  async function lookupProject() {
+    const value = path.trim();
     if (!value) {
       toast.error("请填写 GitLab 项目路径");
       return;
     }
+    setLookupLoading(true);
+    try {
+      chooseProject(await api.gitlabLookupProject(value));
+    } catch (e) {
+      toast.error("解析项目失败：" + (e as Error).message);
+    } finally {
+      setLookupLoading(false);
+    }
+  }
+
+  function chooseBranch(value: string) {
+    setBranch(value);
+    if (!nameTouched && selectedProject) {
+      setName(defaultProjectName(selectedProject, value));
+    }
+  }
+
+  async function addProject() {
+    const value = path.trim();
+    if (!value) {
+      toast.error("请填写 GitLab 项目路径");
+      return;
+    }
+    if (!selectedProject) {
+      toast.error("请先解析项目并选择分支");
+      return;
+    }
+    if (!branch.trim()) {
+      toast.error("请选择分支");
+      return;
+    }
     setSaving(true);
     try {
-      const p = await api.createProject({ path: value });
+      const p = await api.createProject({
+        path: value,
+        name: name.trim() || defaultProjectName(selectedProject, branch),
+        branch,
+      });
       toast.success(`已添加项目：${p.name}`);
       setAddOpen(false);
-      setPath("");
       load();
     } catch (e) {
       toast.error("添加项目失败：" + (e as Error).message);
@@ -148,7 +226,7 @@ export default function ProjectsPage() {
     try {
       const p = await api.checkProject(id);
       setProjects((prev) => prev.map((x) => (x.id === p.id ? p : x)));
-      toast.success(p.last_check_error ? "检查失败：" + p.last_check_error : "已检查默认分支 HEAD");
+      toast.success(p.last_check_error ? "检查失败：" + p.last_check_error : "已检查项目分支 HEAD");
     } catch (e) {
       toast.error("检查失败：" + (e as Error).message);
     } finally {
@@ -162,7 +240,7 @@ export default function ProjectsPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">项目</h1>
           <p className="text-muted-foreground text-sm">
-            以默认分支为主线管理代码源，后续可在项目下发起全量或增量审计。
+            每个项目绑定一个 GitLab 仓库和分支；同一仓库的不同分支可以建成不同项目。
           </p>
         </div>
         <Button onClick={openAdd}>
@@ -255,7 +333,7 @@ export default function ProjectsPage() {
                 <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
                   <span className="inline-flex items-center gap-1">
                     <GitBranchIcon className="size-3.5" />
-                    {p.default_branch || "main"}
+                    {p.tracked_branch || p.default_branch || "main"}
                   </span>
                   <span>HEAD {shortCommit(p.last_seen_commit)}</span>
                   <span>上次审计 {shortCommit(p.last_audited_commit)}</span>
@@ -298,7 +376,10 @@ export default function ProjectsPage() {
           <DialogHeader>
             <DialogTitle>添加 GitLab 项目</DialogTitle>
             <DialogDescription>
-              从当前系统 GitLab 连接可见的项目中选择，或直接填写项目路径。
+              选择仓库和分支，并给项目起名。分支是项目身份的一部分：同一仓库的
+              <code className="mx-1 rounded bg-muted px-1">master</code> 和
+              <code className="mx-1 rounded bg-muted px-1">test-branch</code>
+              可以分别建成两个项目。
             </DialogDescription>
           </DialogHeader>
 
@@ -313,16 +394,62 @@ export default function ProjectsPage() {
           ) : (
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="project-path">项目路径</Label>
-                <Input
-                  id="project-path"
-                  value={path}
-                  onChange={(e) => setPath(e.target.value)}
-                  placeholder="group/project 或 group/subgroup/project"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void addProject();
-                  }}
-                />
+                <Label htmlFor="project-path">仓库路径</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="project-path"
+                    value={path}
+                    onChange={(e) => {
+                      setPath(e.target.value);
+                      setSelectedProject(null);
+                      setBranches([]);
+                      setBranch("");
+                    }}
+                    placeholder="group/project 或 group/subgroup/project"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void lookupProject();
+                    }}
+                  />
+                  <Button type="button" variant="outline" onClick={() => void lookupProject()} disabled={lookupLoading}>
+                    {lookupLoading && <Loader2Icon className="size-4 animate-spin" />}
+                    解析
+                  </Button>
+                </div>
+                {selectedProject && (
+                  <div className="text-muted-foreground text-xs">
+                    已解析：{selectedProject.path_with_namespace} · 默认分支 {selectedProject.default_branch || "main"}
+                  </div>
+                )}
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="project-branch">审计分支</Label>
+                  <Select value={branch} onValueChange={chooseBranch} disabled={!selectedProject || loadingBranches}>
+                    <SelectTrigger id="project-branch" className="w-full">
+                      <SelectValue placeholder={loadingBranches ? "读取分支…" : "先解析项目"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {branches.map((b) => (
+                        <SelectItem key={b.name} value={b.name}>
+                          {b.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="project-name">项目名称</Label>
+                  <Input
+                    id="project-name"
+                    value={name}
+                    onChange={(e) => {
+                      setNameTouched(true);
+                      setName(e.target.value);
+                    }}
+                    placeholder="例如：诊所后端 · test-branch"
+                  />
+                </div>
               </div>
 
               <div className="space-y-2">
@@ -354,7 +481,7 @@ export default function ProjectsPage() {
                     className="pl-9"
                   />
                 </div>
-                <div className="max-h-56 overflow-y-auto rounded-lg border">
+                <div className="max-h-48 overflow-y-auto rounded-lg border">
                   {availableError ? (
                     <div className="p-3 text-sm text-red-600 dark:text-red-400">{availableError}</div>
                   ) : loadingAvailable ? (
@@ -369,12 +496,11 @@ export default function ProjectsPage() {
                       <button
                         key={p.id}
                         type="button"
-                        onClick={() => {
-                          setPath(p.path_with_namespace);
-                          void addProject(p.path_with_namespace);
-                        }}
+                        onClick={() => chooseProject(p)}
                         disabled={saving}
-                        className="hover:bg-muted flex w-full items-start justify-between gap-3 border-b px-3 py-2 text-left text-sm last:border-b-0 disabled:opacity-50"
+                        className={`hover:bg-muted flex w-full items-start justify-between gap-3 border-b px-3 py-2 text-left text-sm last:border-b-0 disabled:opacity-50 ${
+                          selectedProject?.id === p.id ? "bg-muted/60" : ""
+                        }`}
                       >
                         <span className="min-w-0">
                           <span className="block truncate font-medium">{p.name}</span>
@@ -396,7 +522,10 @@ export default function ProjectsPage() {
               取消
             </Button>
             {configured && (
-              <Button onClick={() => void addProject()} disabled={saving || !path.trim()}>
+              <Button
+                onClick={() => void addProject()}
+                disabled={saving || !path.trim() || !selectedProject || !branch || loadingBranches}
+              >
                 {saving && <Loader2Icon className="size-4 animate-spin" />}
                 添加
               </Button>

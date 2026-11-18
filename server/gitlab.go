@@ -156,6 +156,63 @@ func (s *Server) gitlabListProjects(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"projects": projects, "page": page})
 }
 
+// projectBranch is the single branch a project tracks. Legacy rows have an
+// empty tracked_branch and fall back to the GitLab default branch.
+func projectBranch(p *db.CodeProject) string {
+	if p == nil {
+		return ""
+	}
+	if b := strings.TrimSpace(p.TrackedBranch); b != "" {
+		return b
+	}
+	if b := strings.TrimSpace(p.DefaultBranch); b != "" {
+		return b
+	}
+	return "main"
+}
+
+func (s *Server) gitlabLookupProject(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimSpace(strings.TrimSuffix(r.URL.Query().Get("path"), ".git"))
+	if !gitlabProjectPathRE.MatchString(path) || strings.Contains(path, "://") || strings.Contains(path, "@") || strings.Contains(path, "..") {
+		writeErr(w, 400, "项目路径格式应为 group/project 或 group/subgroup/project")
+		return
+	}
+	c, err := s.gitlabClient()
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	gp, err := c.Project(ctx, 0, path)
+	if err != nil {
+		writeErr(w, 502, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"project": gp})
+}
+
+func (s *Server) gitlabListBranches(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeErr(w, 400, "GitLab 项目 ID 不合法")
+		return
+	}
+	c, err := s.gitlabClient()
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	branches, err := c.ListBranches(ctx, id)
+	if err != nil {
+		writeErr(w, 502, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"branches": branches})
+}
+
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	projects, err := s.m.pg.CodeProjects().List()
 	if err != nil {
@@ -196,6 +253,8 @@ func projectPathFromGitLab(p *gitlabsrc.Project) string {
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Path            string `json:"path"`
+		Name            string `json:"name"`
+		Branch          string `json:"branch"`
 		GitLabProjectID int64  `json:"gitlab_project_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -230,13 +289,25 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 502, "GitLab 返回的项目路径为空")
 		return
 	}
-	head := ""
-	branch := strings.TrimSpace(gp.DefaultBranch)
+	branch := strings.TrimSpace(req.Branch)
+	if branch == "" {
+		branch = strings.TrimSpace(gp.DefaultBranch)
+	}
 	if branch == "" {
 		branch = "main"
 	}
-	if b, err := c.Branch(ctx, gp.ID, branch); err == nil && b != nil {
+	b, err := c.Branch(ctx, gp.ID, branch)
+	if err != nil {
+		writeErr(w, 400, fmt.Sprintf("分支 %s 不存在或当前 Token 不可见：%s", branch, err.Error()))
+		return
+	}
+	head := ""
+	if b != nil {
 		head = b.Commit.ID
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = fmt.Sprintf("%s · %s", gp.Name, branch)
 	}
 	u := currentUser(r)
 	var createdBy *int64
@@ -244,11 +315,12 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		createdBy = &u.ID
 	}
 	p, err := s.m.pg.CodeProjects().Create(db.CodeProject{
-		Name:            gp.Name,
+		Name:            name,
 		Path:            path,
 		GitLabProjectID: gp.ID,
 		WebURL:          gp.WebURL,
-		DefaultBranch:   branch,
+		DefaultBranch:   gp.DefaultBranch,
+		TrackedBranch:   branch,
 		LastSeenCommit:  head,
 		Status:          "active",
 		CreatedBy:       createdBy,
@@ -282,17 +354,14 @@ func (s *Server) checkProject(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	branch := p.DefaultBranch
-	if branch == "" {
-		branch = "main"
-	}
+	branch := projectBranch(p)
 	b, err := c.Branch(ctx, p.GitLabProjectID, branch)
 	if err != nil {
-		_ = s.m.pg.CodeProjects().UpdateCheck(id, "", branch, err.Error())
+		_ = s.m.pg.CodeProjects().UpdateCheck(id, "", err.Error())
 		writeErr(w, 502, err.Error())
 		return
 	}
-	if err := s.m.pg.CodeProjects().UpdateCheck(id, b.Commit.ID, branch, ""); err != nil {
+	if err := s.m.pg.CodeProjects().UpdateCheck(id, b.Commit.ID, ""); err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}

@@ -53,15 +53,12 @@ func (s *Server) checkAllGitLabProjects() {
 			return
 		default:
 		}
-		branch := strings.TrimSpace(p.DefaultBranch)
-		if branch == "" {
-			branch = "main"
-		}
+		branch := projectBranch(&p)
 		ctx, cancel := context.WithTimeout(s.ctx, 25*time.Second)
 		b, err := c.Branch(ctx, p.GitLabProjectID, branch)
 		cancel()
 		if err != nil {
-			_ = s.m.pg.CodeProjects().UpdateCheck(p.ID, "", branch, err.Error())
+			_ = s.m.pg.CodeProjects().UpdateCheck(p.ID, "", err.Error())
 			log.Printf("[gitlab] 检查项目 %s 失败: %v", p.Path, err)
 			continue
 		}
@@ -69,12 +66,12 @@ func (s *Server) checkAllGitLabProjects() {
 		if b != nil {
 			head = b.Commit.ID
 		}
-		if err := s.m.pg.CodeProjects().UpdateCheck(p.ID, head, branch, ""); err != nil {
+		if err := s.m.pg.CodeProjects().UpdateCheck(p.ID, head, ""); err != nil {
 			log.Printf("[gitlab] 保存项目 %s 检查结果失败: %v", p.Path, err)
 			continue
 		}
 		if head != "" && head != p.LastAuditedCommit {
-			log.Printf("[gitlab] 项目 %s 默认分支有新提交: %s → %s", p.Path, shortCommit(p.LastAuditedCommit), shortCommit(head))
+			log.Printf("[gitlab] 项目 %s 目标分支有新提交: %s → %s", p.Path, shortCommit(p.LastAuditedCommit), shortCommit(head))
 		}
 	}
 }

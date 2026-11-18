@@ -1603,10 +1603,11 @@ CREATE TRIGGER trg_task_dependencies_upd BEFORE UPDATE ON task_dependencies
 CREATE TABLE IF NOT EXISTS code_projects (
     id                  BIGSERIAL PRIMARY KEY,
     name                TEXT NOT NULL,
-    path                TEXT NOT NULL UNIQUE,
+    path                TEXT NOT NULL,
     gitlab_project_id   BIGINT NOT NULL DEFAULT 0,
     web_url             TEXT NOT NULL DEFAULT '',
     default_branch      TEXT NOT NULL DEFAULT 'main',
+    tracked_branch      TEXT NOT NULL DEFAULT '',
     last_seen_commit    TEXT NOT NULL DEFAULT '',
     last_audited_commit TEXT NOT NULL DEFAULT '',
     last_checked_at     TIMESTAMPTZ,
@@ -1617,6 +1618,14 @@ CREATE TABLE IF NOT EXISTS code_projects (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_code_projects_updated ON code_projects(updated_at DESC);
+
+-- 项目以「仓库 + 分支」为身份：同一仓库的不同分支可以是不同项目。
+-- 旧表只有 path UNIQUE，升级时必须先去掉，否则第二个分支插不进去。
+ALTER TABLE code_projects DROP CONSTRAINT IF EXISTS code_projects_path_key;
+ALTER TABLE code_projects ADD COLUMN IF NOT EXISTS tracked_branch TEXT NOT NULL DEFAULT '';
+UPDATE code_projects SET tracked_branch = COALESCE(NULLIF(default_branch,''), 'master')
+WHERE tracked_branch = '';
+CREATE UNIQUE INDEX IF NOT EXISTS ux_code_projects_path_branch ON code_projects(path, tracked_branch);
 
 -- 项目审计运行：一个 Project 下的全量/增量运行，最终落到 tasks。
 CREATE TABLE IF NOT EXISTS project_audit_runs (

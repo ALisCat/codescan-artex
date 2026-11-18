@@ -84,18 +84,15 @@ func (s *Server) startProjectAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
-	branch := strings.TrimSpace(p.DefaultBranch)
-	if branch == "" {
-		branch = "main"
-	}
+	branch := projectBranch(p)
 	b, err := c.Branch(ctx, p.GitLabProjectID, branch)
 	if err != nil {
-		writeErr(w, 502, "读取默认分支失败："+err.Error())
+		writeErr(w, 502, "读取项目分支失败："+err.Error())
 		return
 	}
 	target := strings.TrimSpace(b.Commit.ID)
 	if target == "" {
-		writeErr(w, 502, "GitLab 返回的默认分支 commit 为空")
+		writeErr(w, 502, "GitLab 返回的分支 commit 为空")
 		return
 	}
 	run, err := s.m.pg.CodeProjects().StartAudit(id, "full", p.LastAuditedCommit, target, &me.ID)
@@ -181,7 +178,7 @@ func (s *Server) runProjectFullAudit(run *db.ProjectAuditRun, p *db.CodeProject,
 		fail("标记源码就绪失败：" + err.Error())
 		return
 	}
-	desc := fmt.Sprintf("审计 GitLab 项目 %s（%s @ %s）", p.Path, p.DefaultBranch, shortSHA(target))
+	desc := fmt.Sprintf("审计 GitLab 项目 %s（%s @ %s）", p.Path, projectBranch(p), shortSHA(target))
 	goal := "对该项目源码进行全量静态代码审计，优先检查 Java 代码中的安全缺陷；结论必须有源码证据，不运行应用、不发请求、不编译业务源码。"
 	t, err := s.m.CreateTaskWithOptions(desc, goal, db.TaskCreateOptions{
 		Name:      fmt.Sprintf("%s · 全量审计 %s", p.Name, shortSHA(target)),

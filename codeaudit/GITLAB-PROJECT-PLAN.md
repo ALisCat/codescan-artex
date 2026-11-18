@@ -1,7 +1,7 @@
 # CodeScan GitLab 项目模块开发计划
 
 > 更新时间：2026-11-17  
-> 状态：阶段 1（连接配置 + 项目主线 + HEAD 检查）与阶段 2 全量审计骨架已落地；增量审计待接入。
+> 状态：阶段 1（连接配置 + 项目主线 + HEAD 检查）、分支选择与阶段 2 全量审计骨架已落地；增量审计待接入。
 
 ## 1. 目标
 
@@ -13,10 +13,10 @@
         └── 任务 Task（现有矩阵审计流水线）
 ```
 
-- 项目以 GitLab 默认分支（`default_branch`）为主线；
+- 项目以「仓库 + 审计分支」为身份：同一仓库的 `master`、`test-branch` 等可分别建成不同项目；
 - 全量审计建立源码与矩阵基线；
 - 增量审计以最近一次成功审计的 commit 为 base，只派发受变更影响的接口/矩阵格；
-- 每天只检查默认分支 HEAD 是否有新 commit，不自动下载源码、不自动建任务；
+- 每天只检查项目目标分支 HEAD 是否有新 commit，不自动下载源码、不自动建任务；
 - 所有审计运行固定到 commit SHA，保证结论可回溯。
 
 ## 2. 已落地（阶段 1）
@@ -35,7 +35,8 @@
 表 `code_projects`：
 
 - `path`、`gitlab_project_id`、`web_url`、`default_branch`；
-- `last_seen_commit`：最近一次检查到的默认分支 HEAD；
+- `tracked_branch`：项目实际跟踪/审计的分支；唯一键为 `(path, tracked_branch)`；
+- `last_seen_commit`：最近一次检查到的目标分支 HEAD；
 - `last_audited_commit`：最近一次成功全量/增量的目标 commit；
 - `last_checked_at`、`last_check_error`、`status`；
 - 创建者、创建/更新时间。
@@ -45,10 +46,12 @@
 ```
 POST /api/settings/gitlab/test        测试连接（管理员）
 GET  /api/gitlab/projects             列出当前 Token 可见项目（管理员）
+GET  /api/gitlab/projects/lookup      按路径解析项目（管理员）
+GET  /api/gitlab/projects/{id}/branches  列出项目分支（管理员）
 GET  /api/projects                    项目列表
-POST /api/projects                    添加项目（管理员）
+POST /api/projects                    添加项目（管理员；body 含 name/branch）
 GET  /api/projects/{id}               项目详情
-POST /api/projects/{id}/check         手动检查默认分支 HEAD（管理员）
+POST /api/projects/{id}/check         手动检查目标分支 HEAD（管理员）
 DELETE /api/projects/{id}             删除项目（管理员）
 ```
 
@@ -56,21 +59,24 @@ DELETE /api/projects/{id}             删除项目（管理员）
 
 - 侧边栏「对话 → 项目 → 任务」；
 - 项目列表：搜索、添加、检查更新、状态（未审计 / 有更新 / 已审计）；
-- 项目详情：默认分支、HEAD、最近成功审计 commit、更新状态；
+- 添加项目：先选择/解析 GitLab 仓库，再选择审计分支，最后填写项目名称；
+- 同一仓库不同分支可分别创建项目，默认名称带分支后缀；
+- 分支在项目创建时确定，避免改变已有审计基线；需要其他分支时新建项目；
+- 项目详情：目标分支、HEAD、最近成功审计 commit、更新状态；
 - 系统配置：GitLab 地址、Token、测试连接、清除 Token；
 - 未配置 Token 时项目页明确提示并跳转系统配置。
 
 ### 2.5 每日检查
 
 - 服务启动后 5 分钟首次执行，之后每 24 小时一次；
-- 只对每个项目的默认分支调用 branch HEAD；
+- 只对每个项目的 `tracked_branch` 调用 branch HEAD；
 - 只更新 `last_seen_commit` / `last_checked_at` / `last_check_error`；
 - 不下载源码、不创建任务、不修改 `last_audited_commit`。
 
 ### 2.6 全量审计（阶段 2 骨架）
 
 - `POST /api/projects/{id}/audit`，当前只接受 `mode=full`；
-- 固定默认分支 HEAD 的 commit 下载 GitLab archive；
+- 固定 `tracked_branch` HEAD 的 commit 下载 GitLab archive；
 - 复用 `task_uploads` staging + 解压逻辑；
 - 创建项目审计运行和 Task，自动绑定源码并开跑；
 - 成功后更新 `last_audited_commit`；
@@ -139,7 +145,8 @@ DELETE /api/projects/{id}             删除项目（管理员）
 - 前端 `npm run build:static`：`/function/projects` 与详情页成功导出；
 - 8789 环境：`/api/settings` 回显 GitLab 配置字段，`/api/projects` 可访问，假 Token 测试返回 401，清除后恢复未配置；
 - `projects-phase2c` 已部署到 8789，项目审计运行表与 `POST /api/projects/{id}/audit` 路由可用；
-- 使用 mock GitLab（自建 archive.zip）完成一次端到端全量审计：项目创建 → HEAD → 下载/解压 → 任务创建 → 源码绑定 → `last_audited_commit` 回写 → 清理任务/项目，验证通过。
+- 使用 mock GitLab（自建 archive.zip）完成一次端到端全量审计：项目创建 → HEAD → 下载/解压 → 任务创建 → 源码绑定 → `last_audited_commit` 回写 → 清理任务/项目，验证通过；
+- 真实 GitLab `weiyang/javascantest` 验证：分支列表能读取 `master` / `test-branch`；使用 `test-branch` 创建一个临时项目（tracked_branch=test-branch，HEAD 69e4a1e9）后删除，验证同仓库不同分支不触发路径唯一冲突。
 
 ## 6. 下一步
 

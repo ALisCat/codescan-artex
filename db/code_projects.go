@@ -13,6 +13,7 @@ type CodeProject struct {
 	GitLabProjectID   int64      `json:"gitlab_project_id"`
 	WebURL            string     `json:"web_url"`
 	DefaultBranch     string     `json:"default_branch"`
+	TrackedBranch     string     `json:"tracked_branch"`
 	LastSeenCommit    string     `json:"last_seen_commit"`
 	LastAuditedCommit string     `json:"last_audited_commit"`
 	LastCheckedAt     *time.Time `json:"last_checked_at,omitempty"`
@@ -27,14 +28,14 @@ type CodeProjectStore struct{ db *DB }
 
 func (d *DB) CodeProjects() *CodeProjectStore { return &CodeProjectStore{db: d} }
 
-const codeProjectCols = `id,name,path,gitlab_project_id,web_url,default_branch,
+const codeProjectCols = `id,name,path,gitlab_project_id,web_url,default_branch,tracked_branch,
 last_seen_commit,last_audited_commit,last_checked_at,last_check_error,status,created_by,created_at,updated_at`
 
 func scanCodeProject(sc interface{ Scan(...any) error }) (*CodeProject, error) {
 	var p CodeProject
 	var checked sql.NullTime
 	var createdBy sql.NullInt64
-	if err := sc.Scan(&p.ID, &p.Name, &p.Path, &p.GitLabProjectID, &p.WebURL, &p.DefaultBranch,
+	if err := sc.Scan(&p.ID, &p.Name, &p.Path, &p.GitLabProjectID, &p.WebURL, &p.DefaultBranch, &p.TrackedBranch,
 		&p.LastSeenCommit, &p.LastAuditedCommit, &checked, &p.LastCheckError, &p.Status,
 		&createdBy, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, err
@@ -91,14 +92,17 @@ func (s *CodeProjectStore) Create(p CodeProject) (*CodeProject, error) {
 	if p.DefaultBranch == "" {
 		p.DefaultBranch = "main"
 	}
+	if p.TrackedBranch == "" {
+		p.TrackedBranch = p.DefaultBranch
+	}
 	if p.Status == "" {
 		p.Status = "active"
 	}
 	var id int64
 	err := s.db.QueryRow(`
-INSERT INTO code_projects(name,path,gitlab_project_id,web_url,default_branch,last_seen_commit,status,created_by)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-ON CONFLICT (path) DO UPDATE SET
+INSERT INTO code_projects(name,path,gitlab_project_id,web_url,default_branch,tracked_branch,last_seen_commit,status,created_by)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+ON CONFLICT (path,tracked_branch) DO UPDATE SET
     name=EXCLUDED.name,
     gitlab_project_id=EXCLUDED.gitlab_project_id,
     web_url=EXCLUDED.web_url,
@@ -106,25 +110,21 @@ ON CONFLICT (path) DO UPDATE SET
     last_seen_commit=COALESCE(NULLIF(EXCLUDED.last_seen_commit,''), code_projects.last_seen_commit),
     updated_at=now()
 RETURNING id`,
-		p.Name, p.Path, p.GitLabProjectID, p.WebURL, p.DefaultBranch, p.LastSeenCommit, p.Status, p.CreatedBy).Scan(&id)
+		p.Name, p.Path, p.GitLabProjectID, p.WebURL, p.DefaultBranch, p.TrackedBranch, p.LastSeenCommit, p.Status, p.CreatedBy).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
 	return s.Get(id)
 }
 
-func (s *CodeProjectStore) UpdateCheck(id int64, head, defaultBranch, errText string) error {
-	if defaultBranch == "" {
-		defaultBranch = "main"
-	}
+func (s *CodeProjectStore) UpdateCheck(id int64, head, errText string) error {
 	_, err := s.db.Exec(`
 UPDATE code_projects SET
     last_seen_commit = COALESCE(NULLIF($2,''), last_seen_commit),
-    default_branch = $3,
     last_checked_at = now(),
-    last_check_error = $4,
+    last_check_error = $3,
     updated_at = now()
-WHERE id=$1`, id, head, defaultBranch, errText)
+WHERE id=$1`, id, head, errText)
 	return err
 }
 
