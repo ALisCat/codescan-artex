@@ -78,10 +78,12 @@ DELETE /api/projects/{id}             删除项目（管理员）
 - `POST /api/projects/{id}/audit`，当前只接受 `mode=full`；
 - 固定 `tracked_branch` HEAD 的 commit 下载 GitLab archive；
 - 复用 `task_uploads` staging + 解压逻辑；
+- 源码绑定后自动运行矩阵流水线（graph → analyzers → bind → import），导入 `ca_cells` 并生成矩阵意图，然后再启动 Task；
 - 创建项目审计运行和 Task，自动绑定源码并开跑；
 - 成功后更新 `last_audited_commit`；
 - 同一项目同一时间只允许一个准备中的运行；
-- 增量请求明确返回 501，不静默降级为全量。
+- 增量请求明确返回 501，不静默降级为全量；
+- 矩阵分析器目录通过 `ARTEX_CODEAUDIT_DIR` 或 `src/codeaudit` 自动定位；矩阵生成失败时审计运行失败，不静默退回标准 planner。
 
 新增表 `project_audit_runs`：
 
@@ -202,7 +204,8 @@ UI：
 - `projects-phase2c` 已部署到 8789，项目审计运行表与 `POST /api/projects/{id}/audit` 路由可用；
 - 使用 mock GitLab（自建 archive.zip）完成一次端到端全量审计：项目创建 → HEAD → 下载/解压 → 任务创建 → 源码绑定 → `last_audited_commit` 回写 → 清理任务/项目，验证通过；
 - 真实 GitLab `weiyang/javascantest` 验证：分支列表能读取 `master` / `test-branch`；使用 `test-branch` 创建一个临时项目（tracked_branch=test-branch，HEAD 69e4a1e9）后删除，验证同仓库不同分支不触发路径唯一冲突；
-- 修复 unlimited 解压路径：`io.LimitReader(rc, -1)` 会立即 EOF，导致全量审计源码目录出现 53 个 0 字节文件；改为 unlimited 时直接读原始 reader，并增加非空文件门禁与回归测试。
+- 修复 unlimited 解压路径：`io.LimitReader(rc, -1)` 会立即 EOF，导致全量审计源码目录出现 53 个 0 字节文件；改为 unlimited 时直接读原始 reader，并增加非空文件门禁与回归测试；
+- 项目全量审计已自动生成矩阵：任务 #24 在约 4 秒内完成 graph/analyzers/bind/import，得到 204 格（18 applicable / 153 N/A / 33 unverified）并生成 18 个矩阵意图；任务 #23 是修复前的标准 planner 路径，已暂停。
 
 ## 6. 下一步
 

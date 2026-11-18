@@ -58,24 +58,43 @@ func (s *Server) caImportCells(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	taskID, _ := strconv.ParseInt(t.ID, 10, 64)
-	n, err := s.m.PG().Cells().Import(taskID, body.Tasks)
+	n, seeded, err := s.importMatrixCells(t, body)
 	if err != nil {
-		writeErr(w, 500, "导入失败: "+err.Error())
+		writeErr(w, 500, err.Error())
 		return
-	}
-	seeded := 0
-	if body.Seed == nil || *body.Seed {
-		seeded, err = s.seedCellIntents(t, 0)
-		if err != nil {
-			writeErr(w, 500, fmt.Sprintf("导入 %d 条成功，但生成意图失败: %v", n, err))
-			return
-		}
 	}
 	writeJSON(w, 200, map[string]any{
 		"imported": n,
 		"seeded":   seeded,
 		"task_id":  taskID,
 	})
+}
+
+// importMatrixCells is the shared DB/seed path used by the HTTP import endpoint
+// and by project full audits after the Python matrix pipeline finishes.
+func (s *Server) importMatrixCells(t *Task, body importCellsBody) (int, int, error) {
+	if t == nil {
+		return 0, 0, fmt.Errorf("task not found")
+	}
+	if len(body.Tasks) == 0 {
+		return 0, 0, fmt.Errorf("矩阵没有生成任何格子")
+	}
+	taskID, err := strconv.ParseInt(t.ID, 10, 64)
+	if err != nil || taskID <= 0 {
+		return 0, 0, fmt.Errorf("task id 无效")
+	}
+	n, err := s.m.PG().Cells().Import(taskID, body.Tasks)
+	if err != nil {
+		return 0, 0, fmt.Errorf("导入矩阵失败: %w", err)
+	}
+	seeded := 0
+	if body.Seed == nil || *body.Seed {
+		seeded, err = s.seedCellIntents(t, 0)
+		if err != nil {
+			return n, 0, fmt.Errorf("导入 %d 条成功，但生成意图失败: %w", n, err)
+		}
+	}
+	return n, seeded, nil
 }
 
 // 人工发起审计时补齐判定标准（矩阵里 N/A/低置信格子通常没有 checklist）。
