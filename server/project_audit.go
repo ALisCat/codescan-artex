@@ -174,6 +174,10 @@ func (s *Server) runProjectFullAudit(run *db.ProjectAuditRun, p *db.CodeProject,
 		fail("源码归档为空")
 		return
 	}
+	if !sourceHasNonEmptyFile(sourceDir) {
+		fail("源码解压后所有文件都是 0 字节，已停止创建审计任务")
+		return
+	}
 	if _, err := s.m.pg.TaskUploads().MarkTaskUploadReady(uploadID, n, stats.Files, stats.Bytes); err != nil {
 		fail("标记源码就绪失败：" + err.Error())
 		return
@@ -206,6 +210,21 @@ func (s *Server) runProjectFullAudit(run *db.ProjectAuditRun, p *db.CodeProject,
 		s.launchTask(task, desc+" "+goal, false)
 	}
 	log.Printf("[project] 项目 %s 全量审计已创建任务 #%s target=%s auto_start=%v", p.Path, task.ID, shortSHA(target), autoStart)
+}
+
+func sourceHasNonEmptyFile(root string) bool {
+	found := false
+	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if info, err := d.Info(); err == nil && info.Size() > 0 {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
 }
 
 // gitlabArchiveWrapper returns the slug prefix GitLab uses for the single

@@ -88,4 +88,9 @@ func TestExtractZipUnlimited(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dest, "src", "main.go")); err != nil {
 		t.Errorf("包裹目录应被剥掉，src/main.go 不存在: %v", err)
 	}
+	// 负数限额路径曾把 io.LimitReader(-1) 传进 io.Copy，导致文件存在但全为 0 字节。
+	b, err := os.ReadFile(filepath.Join(dest, "src", "main.go"))
+	if err != nil || string(b) != "package main\n" {
+		t.Fatalf("unlimited 解压内容 = %q, %v；应为非空源码", b, err)
+	}
 }

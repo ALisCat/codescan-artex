@@ -99,6 +99,61 @@ DELETE /api/projects/{id}             删除项目（管理员）
 - 任务详情展示项目、commit、审计模式；
 - 并发审计互斥已做进程内前置检查，数据库级锁待补。
 
+### 阶段 2.5：增量变更预览（后续开发，优先于真正增量审计）
+
+安全工程师在发起增量前，需要先判断变更范围是否值得跑增量。因此先做只读预览，不创建任务、不下载完整源码、不启动 LLM。
+
+接口：
+
+```text
+GET /api/projects/{id}/change-preview
+```
+
+输入：
+
+- `base_commit`：项目最近一次成功审计的 commit；
+- `target_commit`：`tracked_branch` 当前 HEAD；
+- 无 base 时返回 `needs_full: true`；
+- base == target 时返回 `no_changes: true`。
+
+输出：
+
+- 提交列表：sha、标题、作者、时间；
+- 变更摘要：文件数、新增行、删除行；
+- 文件列表：`old_path`、`new_path`、状态（new/modified/deleted/renamed）、新增/删除行数；
+- 每个文件的 hunk：旧起点/行数、新起点/行数；
+- 展开 diff：GitLab compare 返回的 unified diff 原文；
+- 接口影响：
+  - Controller 注解直接映射，标记 `direct`；
+  - Service/Mapper/XML 只标记 `candidate`；
+  - 配置/公共组件标记 `unmapped`；
+- 告警：compare 超时、diff 截断、非祖先/force push、二进制文件、无变更、无基线。
+
+约束：
+
+- 只调用 compare，不下载完整 archive；
+- 只对变更的 Controller Java 文件按需拉 raw 内容做注解解析；
+- 文件数/字节数设上限，超限时只展示文件级摘要并提示需要全量；
+- diff 不写日志、不持久化完整源码；
+- 预览完成前“发起增量审计”保持不可用；
+- 预览结果不能当作“安全结论”，只用于判断是否值得发起增量。
+
+UI：
+
+- 项目详情新增「增量分析」卡片；
+- 展示 base/target、提交数、文件数、+/- 行数；
+- 文件列表可展开 hunk 和具体 diff；
+- 接口影响分为直接/候选/无法映射；
+- 增加“预览变更”按钮，显示加载中和失败原因。
+
+验收：
+
+- 输入 diff 时能准确显示文件和行号；
+- 无 base 时明确要求先全量；
+- 同 commit 时显示无变更；
+- 大 diff/compare 失败时明确提示回退全量；
+- 不因预览下载完整仓库或创建任务。
+
 ### 阶段 3：增量审计
 
 1. 计算 base：项目最近一次成功审计的 commit；
@@ -146,7 +201,8 @@ DELETE /api/projects/{id}             删除项目（管理员）
 - 8789 环境：`/api/settings` 回显 GitLab 配置字段，`/api/projects` 可访问，假 Token 测试返回 401，清除后恢复未配置；
 - `projects-phase2c` 已部署到 8789，项目审计运行表与 `POST /api/projects/{id}/audit` 路由可用；
 - 使用 mock GitLab（自建 archive.zip）完成一次端到端全量审计：项目创建 → HEAD → 下载/解压 → 任务创建 → 源码绑定 → `last_audited_commit` 回写 → 清理任务/项目，验证通过；
-- 真实 GitLab `weiyang/javascantest` 验证：分支列表能读取 `master` / `test-branch`；使用 `test-branch` 创建一个临时项目（tracked_branch=test-branch，HEAD 69e4a1e9）后删除，验证同仓库不同分支不触发路径唯一冲突。
+- 真实 GitLab `weiyang/javascantest` 验证：分支列表能读取 `master` / `test-branch`；使用 `test-branch` 创建一个临时项目（tracked_branch=test-branch，HEAD 69e4a1e9）后删除，验证同仓库不同分支不触发路径唯一冲突；
+- 修复 unlimited 解压路径：`io.LimitReader(rc, -1)` 会立即 EOF，导致全量审计源码目录出现 53 个 0 字节文件；改为 unlimited 时直接读原始 reader，并增加非空文件门禁与回归测试。
 
 ## 6. 下一步
 

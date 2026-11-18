@@ -458,7 +458,14 @@ func extractZipArchiveOpts(src, dest string, opt extractOptions) (zipStats, erro
 			cleanupRaw()
 			return stats, err
 		}
-		n, err := io.Copy(out, io.LimitReader(rc, maxBytes))
+		// io.LimitReader with a negative N returns EOF immediately, so the
+		// unlimited (-1) path must use the raw reader. This bug produced a tree
+		// full of 0-byte files for project full audits.
+		reader := io.Reader(rc)
+		if !unlimitedBytes {
+			reader = io.LimitReader(rc, maxBytes)
+		}
+		n, err := io.Copy(out, reader)
 		_ = rc.Close()
 		closeErr := out.Close()
 		if err != nil {
