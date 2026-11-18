@@ -320,6 +320,40 @@ function DetailInner() {
         </Card>
       )}
 
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <CheckCircle2Icon className="size-4" />
+            项目信息
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
+          <div>
+            <div className="text-muted-foreground text-xs">GitLab 项目 ID</div>
+            <div className="mt-1 font-mono">{p.gitlab_project_id || "—"}</div>
+          </div>
+          <div>
+            <div className="text-muted-foreground text-xs">目标分支</div>
+            <div className="mt-1 inline-flex items-center gap-1">
+              <GitBranchIcon className="size-3.5" />
+              {trackedBranch}
+            </div>
+          </div>
+          <div>
+            <div className="text-muted-foreground text-xs">状态</div>
+            <div className="mt-1">{p.status || "active"}</div>
+          </div>
+          <div>
+            <div className="text-muted-foreground text-xs">添加时间</div>
+            <div className="mt-1">{fmtTime(p.created_at)}</div>
+          </div>
+          <div>
+            <div className="text-muted-foreground text-xs">最近更新</div>
+            <div className="mt-1">{fmtTime(p.updated_at)}</div>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader>
@@ -576,39 +610,7 @@ function DetailInner() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <CheckCircle2Icon className="size-4" />
-            项目信息
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
-          <div>
-            <div className="text-muted-foreground text-xs">GitLab 项目 ID</div>
-            <div className="mt-1 font-mono">{p.gitlab_project_id || "—"}</div>
-          </div>
-          <div>
-            <div className="text-muted-foreground text-xs">目标分支</div>
-            <div className="mt-1 inline-flex items-center gap-1">
-              <GitBranchIcon className="size-3.5" />
-              {trackedBranch}
-            </div>
-          </div>
-          <div>
-            <div className="text-muted-foreground text-xs">状态</div>
-            <div className="mt-1">{p.status || "active"}</div>
-          </div>
-          <div>
-            <div className="text-muted-foreground text-xs">添加时间</div>
-            <div className="mt-1">{fmtTime(p.created_at)}</div>
-          </div>
-          <div>
-            <div className="text-muted-foreground text-xs">最近更新</div>
-            <div className="mt-1">{fmtTime(p.updated_at)}</div>
-          </div>
-        </CardContent>
-      </Card>
+
     </div>
   );
 }
