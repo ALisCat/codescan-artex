@@ -36,6 +36,11 @@ func TestVerifyAndProjectCallsUsePrivateToken(t *testing.T) {
 			_, _ = w.Write([]byte(`{"name":"main","commit":{"id":"abcdef123456"}}`))
 		case "/api/v4/projects/12/repository/branches":
 			_, _ = w.Write([]byte(`[{"name":"main","commit":{"id":"abcdef123456"}},{"name":"test-branch","commit":{"id":"abcdef123456"}}]`))
+		case "/api/v4/projects/12/repository/files/src%2Fmain%2FApp.java/raw":
+			if r.URL.Query().Get("ref") != "abcdef123456" {
+				t.Errorf("raw ref = %q", r.URL.Query().Get("ref"))
+			}
+			_, _ = w.Write([]byte("class App {}"))
 		case "/api/v4/projects":
 			if r.URL.Query().Get("membership") != "true" || r.URL.Query().Get("search") != "clinic" {
 				t.Errorf("unexpected query: %s", r.URL.RawQuery)
@@ -65,6 +70,10 @@ func TestVerifyAndProjectCallsUsePrivateToken(t *testing.T) {
 	branches, err := c.ListBranches(ctx, 12)
 	if err != nil || len(branches) != 2 || branches[1].Name != "test-branch" {
 		t.Fatalf("branches = %+v, %v", branches, err)
+	}
+	raw, err := c.RawFile(ctx, 12, "src/main/App.java", "abcdef123456")
+	if err != nil || string(raw) != "class App {}" {
+		t.Fatalf("raw = %q, %v", raw, err)
 	}
 	list, err := c.ListProjects(ctx, "clinic", 1, 50)
 	if err != nil || len(list) != 1 || list[0].ID != 12 {

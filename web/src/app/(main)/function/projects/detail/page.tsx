@@ -9,6 +9,7 @@ import {
   ArrowLeftIcon,
   CheckCircle2Icon,
   ExternalLinkIcon,
+  FileCode2Icon,
   GitBranchIcon,
   GitCommitHorizontalIcon,
   HistoryIcon,
@@ -24,7 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
-import type { CodeProject, ProjectAuditRun } from "@/lib/types";
+import type { ChangeFile, ChangePreview, CodeProject, ProjectAuditRun } from "@/lib/types";
 
 function fmtTime(v?: string) {
   if (!v) return "—";
@@ -38,6 +39,82 @@ function shortCommit(v: string) {
   return v ? v.slice(0, 12) : "—";
 }
 
+function changeStatusLabel(s: string) {
+  switch (s) {
+    case "added":
+      return "新增";
+    case "deleted":
+      return "删除";
+    case "renamed":
+      return "重命名";
+    default:
+      return "修改";
+  }
+}
+
+function changeStatusClass(s: string) {
+  switch (s) {
+    case "added":
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+    case "deleted":
+      return "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300";
+    case "renamed":
+      return "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300";
+    default:
+      return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+  }
+}
+
+function ChangeFileRow({ file }: { file: ChangeFile }) {
+  return (
+    <details className="group rounded-lg border">
+      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
+        <Badge variant="outline" className={changeStatusClass(file.status)}>
+          {changeStatusLabel(file.status)}
+        </Badge>
+        <span className="min-w-0 flex-1 truncate font-mono text-xs">{file.path}</span>
+        <span className="text-emerald-600 dark:text-emerald-400">+{file.additions}</span>
+        <span className="text-red-600 dark:text-red-400">-{file.deletions}</span>
+        <span className="text-muted-foreground text-xs group-open:hidden">展开</span>
+      </summary>
+      <div className="space-y-3 border-t px-3 py-3">
+        {file.hunks.length > 0 && (
+          <div className="space-y-1 text-xs">
+            <div className="font-medium">变更块</div>
+            {file.hunks.map((h, i) => (
+              <div key={i} className="text-muted-foreground font-mono">
+                旧 {h.old_start}-{h.old_start + h.old_lines - 1} → 新 {h.new_start}-
+                {h.new_start + h.new_lines - 1}
+              </div>
+            ))}
+          </div>
+        )}
+        {file.endpoints.length > 0 && (
+          <div className="space-y-1 text-xs">
+            <div className="font-medium">直接受影响接口</div>
+            {file.endpoints.map((ep, i) => (
+              <div key={i} className="flex flex-wrap items-center gap-2 font-mono">
+                <Badge variant="outline">{ep.method}</Badge>
+                <span>{ep.path}</span>
+                <span className="text-muted-foreground">:{ep.line}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {file.diff ? (
+          <pre className="bg-muted/40 max-h-96 overflow-auto rounded-md border p-3 text-xs leading-relaxed">
+            {file.diff}
+          </pre>
+        ) : (
+          <div className="text-muted-foreground text-xs">
+            {file.diff_omitted ? "diff 过大，已省略；请到 GitLab 查看完整变更。" : "GitLab 未返回该文件的文本 diff。"}
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
 function DetailInner() {
   const sp = useSearchParams();
   const router = useRouter();
@@ -47,6 +124,9 @@ function DetailInner() {
   const [loading, setLoading] = React.useState(true);
   const [checking, setChecking] = React.useState(false);
   const [starting, setStarting] = React.useState(false);
+  const [preview, setPreview] = React.useState<ChangePreview | null>(null);
+  const [previewLoading, setPreviewLoading] = React.useState(false);
+  const [previewError, setPreviewError] = React.useState("");
   const [error, setError] = React.useState("");
   const pollRef = React.useRef<number | null>(null);
 
@@ -112,6 +192,21 @@ function DetailInner() {
       toast.error("发起全量审计失败：" + (e as Error).message);
     } finally {
       setStarting(false);
+    }
+  }
+
+  async function loadPreview() {
+    if (!p) return;
+    setPreviewLoading(true);
+    setPreviewError("");
+    try {
+      const r = await api.projectChangePreview(p.id);
+      setPreview(r);
+      if (r.error) setPreviewError(r.error);
+    } catch (e) {
+      setPreviewError((e as Error).message);
+    } finally {
+      setPreviewLoading(false);
     }
   }
 
@@ -292,6 +387,134 @@ function DetailInner() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader className="flex flex-row items-start justify-between gap-3">
+          <div className="space-y-1">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <FileCode2Icon className="size-4" />
+              增量分析
+            </CardTitle>
+            <CardDescription>
+              对比上次成功审计基线和目标分支 HEAD；预览只读取 GitLab compare，不下载完整源码、不创建任务。
+            </CardDescription>
+          </div>
+          <Button variant="outline" size="sm" onClick={loadPreview} disabled={previewLoading}>
+            {previewLoading ? <Loader2Icon className="size-4 animate-spin" /> : <RefreshCwIcon className="size-4" />}
+            预览变更
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 text-sm sm:grid-cols-2">
+            <div className="rounded-lg border p-3">
+              <div className="text-muted-foreground text-xs">审计基线</div>
+              <div className="mt-1 font-mono text-sm">{shortCommit(p.last_audited_commit)}</div>
+              <div className="text-muted-foreground mt-1 text-xs">{p.last_audited_commit ? "上次成功审计" : "还没有成功基线"}</div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-muted-foreground text-xs">目标分支 HEAD</div>
+              <div className="mt-1 font-mono text-sm">{shortCommit(preview?.target_commit || p.last_seen_commit)}</div>
+              <div className="text-muted-foreground mt-1 text-xs">{trackedBranch}</div>
+            </div>
+          </div>
+
+          {previewError && (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-700 dark:text-red-300">
+              {previewError}
+            </div>
+          )}
+
+          {!preview && !previewLoading && !previewError && (
+            <div className="text-muted-foreground text-sm">
+              点击“预览变更”查看文件、行数和候选接口，再决定是否发起增量审计。
+            </div>
+          )}
+
+          {preview?.needs_full && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-700 dark:text-amber-300">
+              还没有成功审计基线，无法做增量预览。请先完成一次全量审计。
+            </div>
+          )}
+
+          {preview?.no_changes && (
+            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+              目标分支没有新提交，无需增量分析。
+            </div>
+          )}
+
+          {preview && !preview.needs_full && !preview.no_changes && (
+            <>
+              <div className="grid gap-3 text-sm sm:grid-cols-4">
+                <div className="rounded-lg border p-3">
+                  <div className="text-muted-foreground text-xs">提交</div>
+                  <div className="mt-1 text-lg font-semibold">{preview.commits.length}</div>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <div className="text-muted-foreground text-xs">变更文件</div>
+                  <div className="mt-1 text-lg font-semibold">{preview.files_changed}</div>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <div className="text-muted-foreground text-xs">新增行</div>
+                  <div className="mt-1 text-lg font-semibold text-emerald-600 dark:text-emerald-400">+{preview.additions}</div>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <div className="text-muted-foreground text-xs">删除行</div>
+                  <div className="mt-1 text-lg font-semibold text-red-600 dark:text-red-400">-{preview.deletions}</div>
+                </div>
+              </div>
+
+              {preview.commits.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-sm font-medium">提交列表</div>
+                  <div className="space-y-1 rounded-lg border">
+                    {preview.commits.slice(0, 20).map((c) => (
+                      <div key={c.id} className="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs last:border-b-0">
+                        <span className="font-mono text-muted-foreground">{shortCommit(c.id || c.short_id || "")}</span>
+                        <span className="min-w-0 flex-1 truncate">{c.title}</span>
+                        <span className="text-muted-foreground">{c.author_name || ""}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <div className="text-sm font-medium">变更文件（点击展开 diff）</div>
+                {preview.files.length === 0 ? (
+                  <div className="text-muted-foreground text-sm">没有文件变更。</div>
+                ) : (
+                  <div className="space-y-2">
+                    {preview.files.map((f) => (
+                      <ChangeFileRow key={`${f.old_path}:${f.new_path}`} file={f} />
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {preview.endpoints.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-sm font-medium">直接受影响接口</div>
+                  <div className="flex flex-wrap gap-2">
+                    {preview.endpoints.map((ep, i) => (
+                      <Badge key={`${ep.method}:${ep.path}:${i}`} variant="outline" className="font-mono">
+                        {ep.method} {ep.path}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {preview.warnings.length > 0 && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-700 dark:text-amber-300">
+                  {preview.warnings.map((w, i) => (
+                    <div key={i}>{w}</div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

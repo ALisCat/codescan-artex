@@ -23,7 +23,7 @@
 
 ## P0-0 增量变更预览
 
-**状态：** 未开始（设计已记录在 `codeaudit/GITLAB-PROJECT-PLAN.md` 阶段 2.5）
+**状态：** 已实现（设计见 `codeaudit/GITLAB-PROJECT-PLAN.md` 阶段 2.5）
 
 目标：在项目详情页展示 base→target 的提交、变更文件、行数、hunk 和候选接口，让安全工程师决定是否发起增量审计。
 

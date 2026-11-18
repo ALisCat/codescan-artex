@@ -203,12 +203,10 @@ func (s *Server) runProjectFullAudit(run *db.ProjectAuditRun, p *db.CodeProject,
 		fail("生成审计矩阵失败：" + err.Error())
 		return
 	}
-	if err := s.m.pg.CodeProjects().MarkAudited(p.ID, target); err != nil {
-		fail("更新项目审计基线失败：" + err.Error())
-		return
-	}
 	taskID, _ := strconv.ParseInt(task.ID, 10, 64)
-	if err := s.m.pg.CodeProjects().FinishAudit(run.ID, &taskID, "ready", ""); err != nil {
+	// Do not write last_audited_commit here: the task has just been created and
+	// may still fail. The reconciler writes it after a done status.
+	if err := s.m.pg.CodeProjects().FinishAudit(run.ID, &taskID, "running", ""); err != nil {
 		log.Printf("[project] 更新审计运行失败: %v", err)
 	}
 	_ = os.Remove(zipPath)

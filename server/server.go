@@ -165,6 +165,8 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	s.startUploadJanitor()
 	// 每天只检查项目默认分支 HEAD，不自动下载源码、不自动建审计任务。
 	s.startGitLabProjectChecker()
+	// 项目审计任务真正结束后才回写 last_audited_commit，避免假基线。
+	s.startProjectAuditReconciler()
 	// 把旧版「单账号 + 单一密码」迁移成第一个管理员账号（仅当还没有任何账号时）。
 	s.migrateLegacyAdmin()
 	// 熔断阈值/冷却是失败路径上的热参数，启动时把全局重试策略推给 Registry 一次；
@@ -885,6 +887,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/projects/{id}/check", s.requireAdmin(s.checkProject))
 	mux.HandleFunc("DELETE /api/projects/{id}", s.requireAdmin(s.deleteProject))
 	mux.HandleFunc("POST /api/projects/{id}/audit", s.requireAdmin(s.startProjectAudit))
+	mux.HandleFunc("GET /api/projects/{id}/change-preview", s.requireAdmin(s.projectChangePreview))
 	mux.HandleFunc("GET /api/projects/{id}/audits", s.listProjectAudits)
 	mux.HandleFunc("GET /api/projects/{id}/audits/{runID}", s.getProjectAudit)
 	// 漏洞 IM 推送。渠道是「多实例 + 各自过滤规则」的资源，因此独立成一组

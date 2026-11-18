@@ -133,6 +133,85 @@ func (c *Client) DownloadArchive(ctx context.Context, projectID int64, sha, dst 
 	return n, nil
 }
 
+type CompareCommit struct {
+	ID         string `json:"id"`
+	ShortID    string `json:"short_id"`
+	Title      string `json:"title"`
+	AuthorName string `json:"author_name"`
+	CreatedAt  string `json:"created_at"`
+}
+
+type CompareDiff struct {
+	OldPath     string `json:"old_path"`
+	NewPath     string `json:"new_path"`
+	NewFile     bool   `json:"new_file"`
+	RenamedFile bool   `json:"renamed_file"`
+	DeletedFile bool   `json:"deleted_file"`
+	Diff        string `json:"diff"`
+}
+
+type Compare struct {
+	Commit         CompareCommit   `json:"commit"`
+	Commits        []CompareCommit `json:"commits"`
+	Diffs          []CompareDiff   `json:"diffs"`
+	CompareTimeout bool            `json:"compare_timeout"`
+	CompareSameRef bool            `json:"compare_same_ref"`
+}
+
+// Compare returns GitLab's unified diff between two commits. The caller must
+// treat compare_timeout as an incomplete result, not as "no changes".
+func (c *Client) Compare(ctx context.Context, projectID int64, from, to string) (*Compare, error) {
+	if projectID <= 0 || strings.TrimSpace(from) == "" || strings.TrimSpace(to) == "" {
+		return nil, fmt.Errorf("GitLab compare 参数不完整")
+	}
+	var out Compare
+	path := fmt.Sprintf("/projects/%d/repository/compare?from=%s&to=%s", projectID,
+		url.QueryEscape(from), url.QueryEscape(to))
+	if err := c.request(ctx, http.MethodGet, path, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RawFile downloads one text file at a fixed ref. It is used only for changed
+// Controller files during change preview; a hard cap keeps a pathological file
+// from turning into a memory problem.
+func (c *Client) RawFile(ctx context.Context, projectID int64, filePath, ref string) ([]byte, error) {
+	if projectID <= 0 || strings.TrimSpace(filePath) == "" || strings.TrimSpace(ref) == "" {
+		return nil, fmt.Errorf("GitLab raw 参数不完整")
+	}
+	u := fmt.Sprintf("%s/api/v4/projects/%d/repository/files/%s/raw?ref=%s", c.BaseURL, projectID,
+		url.PathEscape(filePath), url.QueryEscape(ref))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("构造 GitLab raw 请求失败")
+	}
+	req.Header.Set("User-Agent", "CodeScan")
+	if c.Token != "" {
+		req.Header.Set("PRIVATE-TOKEN", c.Token)
+	}
+	resp, err := c.HC.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("读取 GitLab 文件失败: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("GitLab 文件不存在或当前 Token 不可见")
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("读取 GitLab 文件失败（HTTP %d）", resp.StatusCode)
+	}
+	const limit = 2 << 20
+	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("读取 GitLab 文件失败: %w", err)
+	}
+	if len(b) > limit {
+		return nil, fmt.Errorf("文件超过预览上限（2 MiB）")
+	}
+	return b, nil
+}
+
 func (c *Client) request(ctx context.Context, method, path string, out any) error {
 	if c == nil {
 		return fmt.Errorf("GitLab 客户端未初始化")

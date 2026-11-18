@@ -78,6 +78,31 @@ func (s *CodeProjectStore) ListAudits(projectID int64, limit int) ([]ProjectAudi
 	return out, rows.Err()
 }
 
+// ListPendingAuditRuns returns runs whose task has been created but whose audit
+// has not yet reached a terminal audit state. The reconciler uses this to move
+// last_audited_commit only after the task really finished.
+func (s *CodeProjectStore) ListPendingAuditRuns(limit int) ([]ProjectAuditRun, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.db.Query(`SELECT `+projectAuditCols+` FROM project_audit_runs
+WHERE task_id IS NOT NULL AND status IN ('ready','running')
+ORDER BY id ASC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ProjectAuditRun
+	for rows.Next() {
+		r, err := scanProjectAudit(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *r)
+	}
+	return out, rows.Err()
+}
+
 func (s *CodeProjectStore) FinishAudit(id int64, taskID *int64, status, errText string) error {
 	_, err := s.db.Exec(`
 UPDATE project_audit_runs SET task_id=$2, status=$3, error_message=$4, updated_at=now()

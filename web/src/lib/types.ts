@@ -1093,6 +1093,54 @@ export interface GitLabTestResult {
   id?: number;
 }
 
+export interface ChangeHunk {
+  old_start: number;
+  old_lines: number;
+  new_start: number;
+  new_lines: number;
+  header?: string;
+}
+
+export interface ChangeEndpoint {
+  method: string;
+  path: string;
+  file: string;
+  line: number;
+  confidence: "direct" | "candidate" | string;
+}
+
+export interface ChangeFile {
+  old_path: string;
+  new_path: string;
+  path: string;
+  status: "added" | "modified" | "deleted" | "renamed" | string;
+  additions: number;
+  deletions: number;
+  hunks: ChangeHunk[];
+  diff?: string;
+  diff_omitted?: boolean;
+  endpoints: ChangeEndpoint[];
+}
+
+export interface ChangePreview {
+  available: boolean;
+  needs_full: boolean;
+  no_changes: boolean;
+  base_commit: string;
+  target_commit: string;
+  branch: string;
+  commits: { id: string; short_id?: string; title: string; author_name?: string; created_at?: string }[];
+  files: ChangeFile[];
+  endpoints: ChangeEndpoint[];
+  files_changed: number;
+  additions: number;
+  deletions: number;
+  warnings: string[];
+  diff_truncated: boolean;
+  compare_timeout: boolean;
+  error?: string;
+}
+
 export interface ProjectAuditRun {
   id: number;
   project_id: number;
