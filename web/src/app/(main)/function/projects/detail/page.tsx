@@ -23,6 +23,7 @@ import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import type { ChangeFile, ChangePreview, CodeProject, ProjectAuditRun } from "@/lib/types";
@@ -127,6 +128,8 @@ function DetailInner() {
   const [preview, setPreview] = React.useState<ChangePreview | null>(null);
   const [previewLoading, setPreviewLoading] = React.useState(false);
   const [previewError, setPreviewError] = React.useState("");
+  const [reviewNote, setReviewNote] = React.useState("");
+  const [reviewing, setReviewing] = React.useState(false);
   const [error, setError] = React.useState("");
   const pollRef = React.useRef<number | null>(null);
 
@@ -207,6 +210,25 @@ function DetailInner() {
       setPreviewError((e as Error).message);
     } finally {
       setPreviewLoading(false);
+    }
+  }
+
+  async function markReviewed() {
+    if (!p || !preview?.target_commit) {
+      toast.error("请先预览变更");
+      return;
+    }
+    setReviewing(true);
+    try {
+      const next = await api.reviewProject(p.id, preview.target_commit, reviewNote.trim());
+      setP(next);
+      setReviewNote("");
+      toast.success("已标记已阅；审计基线未改变");
+      await loadPreview();
+    } catch (e) {
+      toast.error("标记已阅失败：" + (e as Error).message);
+    } finally {
+      setReviewing(false);
     }
   }
 
@@ -405,11 +427,18 @@ function DetailInner() {
           </Button>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 text-sm sm:grid-cols-2">
+          <div className="grid gap-3 text-sm sm:grid-cols-3">
             <div className="rounded-lg border p-3">
               <div className="text-muted-foreground text-xs">审计基线</div>
               <div className="mt-1 font-mono text-sm">{shortCommit(p.last_audited_commit)}</div>
               <div className="text-muted-foreground mt-1 text-xs">{p.last_audited_commit ? "上次成功审计" : "还没有成功基线"}</div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-muted-foreground text-xs">上次已阅基线</div>
+              <div className="mt-1 font-mono text-sm">{shortCommit(p.last_reviewed_commit)}</div>
+              <div className="text-muted-foreground mt-1 text-xs">
+                {p.last_reviewed_commit ? p.last_review_note || "已阅，暂未审计" : "尚未标记已阅"}
+              </div>
             </div>
             <div className="rounded-lg border p-3">
               <div className="text-muted-foreground text-xs">目标分支 HEAD</div>
@@ -446,20 +475,51 @@ function DetailInner() {
             <>
               <div className="grid gap-3 text-sm sm:grid-cols-4">
                 <div className="rounded-lg border p-3">
-                  <div className="text-muted-foreground text-xs">提交</div>
-                  <div className="mt-1 text-lg font-semibold">{preview.commits.length}</div>
+                  <div className="text-muted-foreground text-xs">自上次审计提交</div>
+                  <div className="mt-1 text-lg font-semibold">{preview.audit_gap.commits}</div>
                 </div>
                 <div className="rounded-lg border p-3">
-                  <div className="text-muted-foreground text-xs">变更文件</div>
-                  <div className="mt-1 text-lg font-semibold">{preview.files_changed}</div>
+                  <div className="text-muted-foreground text-xs">自上次审计文件</div>
+                  <div className="mt-1 text-lg font-semibold">{preview.audit_gap.files_changed}</div>
                 </div>
                 <div className="rounded-lg border p-3">
                   <div className="text-muted-foreground text-xs">新增行</div>
-                  <div className="mt-1 text-lg font-semibold text-emerald-600 dark:text-emerald-400">+{preview.additions}</div>
+                  <div className="mt-1 text-lg font-semibold text-emerald-600 dark:text-emerald-400">+{preview.audit_gap.additions}</div>
                 </div>
                 <div className="rounded-lg border p-3">
                   <div className="text-muted-foreground text-xs">删除行</div>
-                  <div className="mt-1 text-lg font-semibold text-red-600 dark:text-red-400">-{preview.deletions}</div>
+                  <div className="mt-1 text-lg font-semibold text-red-600 dark:text-red-400">-{preview.audit_gap.deletions}</div>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
+                <div className="font-medium text-amber-800 dark:text-amber-200">审计缺口与已阅状态</div>
+                <div className="text-muted-foreground mt-1 text-xs leading-relaxed">
+                  自上次已阅：
+                  {preview.review_same_as_audit
+                    ? "尚未建立已阅基线，当前按审计缺口展示"
+                    : `${preview.review_summary.commits} 个提交 / ${preview.review_summary.files_changed} 个文件`}
+                  <br />
+                  自上次审计：{preview.audit_gap.commits} 个提交 / {preview.audit_gap.files_changed} 个文件。
+                  已阅不等于已审计；后续增量审计仍会从上次审计基线开始。
+                </div>
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                  <Input
+                    value={reviewNote}
+                    onChange={(e) => setReviewNote(e.target.value)}
+                    placeholder="已阅说明（可选）：例如仅测试代码、暂缓审计"
+                    className="h-8 text-xs"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="shrink-0"
+                    onClick={markReviewed}
+                    disabled={reviewing || p.last_reviewed_commit === preview.target_commit}
+                  >
+                    {reviewing && <Loader2Icon className="size-4 animate-spin" />}
+                    {p.last_reviewed_commit === preview.target_commit ? "当前提交已标记已阅" : "本次不审计，标记已阅"}
+                  </Button>
                 </div>
               </div>
 

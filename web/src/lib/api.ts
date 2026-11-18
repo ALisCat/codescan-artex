@@ -1148,6 +1148,8 @@ export const api = {
     get<{ audits: ProjectAuditRun[] | null }>(`/projects/${id}/audits`).then((r) => arr(r.audits)),
   projectAudit: (id: number, runID: number) => get<ProjectAuditRun>(`/projects/${id}/audits/${runID}`),
   projectChangePreview: (id: number) => get<ChangePreview>(`/projects/${id}/change-preview`),
+  reviewProject: (id: number, commit: string, note: string) =>
+    post<CodeProject>(`/projects/${id}/review`, { commit, note }),
 
   // ---- 漏洞 IM 推送 ----
   // 渠道是多实例资源（同一类型可配多个机器人、各有过滤规则），因此独立成组，

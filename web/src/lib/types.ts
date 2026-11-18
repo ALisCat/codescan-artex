@@ -1076,6 +1076,10 @@ export interface CodeProject {
   tracked_branch: string;
   last_seen_commit: string;
   last_audited_commit: string;
+  last_reviewed_commit: string;
+  last_reviewed_at?: string;
+  last_reviewed_by?: number | null;
+  last_review_note: string;
   last_checked_at?: string;
   last_check_error: string;
   status: string;
@@ -1122,6 +1126,13 @@ export interface ChangeFile {
   endpoints: ChangeEndpoint[];
 }
 
+export interface ChangeSummary {
+  commits: number;
+  files_changed: number;
+  additions: number;
+  deletions: number;
+}
+
 export interface ChangePreview {
   available: boolean;
   needs_full: boolean;
@@ -1129,12 +1140,18 @@ export interface ChangePreview {
   base_commit: string;
   target_commit: string;
   branch: string;
+  reviewed_commit: string;
+  review_base_commit: string;
+  review_same_as_audit: boolean;
   commits: { id: string; short_id?: string; title: string; author_name?: string; created_at?: string }[];
+  review_commits: { id: string; short_id?: string; title: string; author_name?: string; created_at?: string }[];
   files: ChangeFile[];
   endpoints: ChangeEndpoint[];
   files_changed: number;
   additions: number;
   deletions: number;
+  audit_gap: ChangeSummary;
+  review_summary: ChangeSummary;
   warnings: string[];
   diff_truncated: boolean;
   compare_timeout: boolean;

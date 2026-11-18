@@ -1610,6 +1610,10 @@ CREATE TABLE IF NOT EXISTS code_projects (
     tracked_branch      TEXT NOT NULL DEFAULT '',
     last_seen_commit    TEXT NOT NULL DEFAULT '',
     last_audited_commit TEXT NOT NULL DEFAULT '',
+    last_reviewed_commit TEXT NOT NULL DEFAULT '',
+    last_reviewed_at    TIMESTAMPTZ,
+    last_reviewed_by    BIGINT,
+    last_review_note    TEXT NOT NULL DEFAULT '',
     last_checked_at     TIMESTAMPTZ,
     last_check_error    TEXT NOT NULL DEFAULT '',
     status              TEXT NOT NULL DEFAULT 'active',
@@ -1623,6 +1627,10 @@ CREATE INDEX IF NOT EXISTS idx_code_projects_updated ON code_projects(updated_at
 -- 旧表只有 path UNIQUE，升级时必须先去掉，否则第二个分支插不进去。
 ALTER TABLE code_projects DROP CONSTRAINT IF EXISTS code_projects_path_key;
 ALTER TABLE code_projects ADD COLUMN IF NOT EXISTS tracked_branch TEXT NOT NULL DEFAULT '';
+ALTER TABLE code_projects ADD COLUMN IF NOT EXISTS last_reviewed_commit TEXT NOT NULL DEFAULT '';
+ALTER TABLE code_projects ADD COLUMN IF NOT EXISTS last_reviewed_at TIMESTAMPTZ;
+ALTER TABLE code_projects ADD COLUMN IF NOT EXISTS last_reviewed_by BIGINT;
+ALTER TABLE code_projects ADD COLUMN IF NOT EXISTS last_review_note TEXT NOT NULL DEFAULT '';
 UPDATE code_projects SET tracked_branch = COALESCE(NULLIF(default_branch,''), 'master')
 WHERE tracked_branch = '';
 CREATE UNIQUE INDEX IF NOT EXISTS ux_code_projects_path_branch ON code_projects(path, tracked_branch);
