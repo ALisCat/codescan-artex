@@ -214,6 +214,9 @@ func (s *Server) projectChangePreview(w http.ResponseWriter, r *http.Request) {
 			raw, rawErr := c.RawFile(ctx, p.GitLabProjectID, rawPath, ref)
 			if rawErr == nil {
 				f.Endpoints = parseSpringEndpoints(raw, f.Path)
+				if f.Endpoints == nil {
+					f.Endpoints = []changeEndpoint{}
+				}
 				rawBudget--
 			} else {
 				out.Warnings = append(out.Warnings, fmt.Sprintf("未能读取 %s 做接口映射：%s", f.Path, rawErr.Error()))

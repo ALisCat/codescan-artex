@@ -89,10 +89,10 @@ function ChangeFileRow({ file }: { file: ChangeFile }) {
         <span className="text-muted-foreground text-xs group-open:hidden">展开</span>
       </summary>
       <div className="space-y-3 border-t px-3 py-3">
-        {file.hunks.length > 0 && (
+        {(file.hunks ?? []).length > 0 && (
           <div className="space-y-1 text-xs">
             <div className="font-medium">变更块</div>
-            {file.hunks.map((h, i) => (
+            {(file.hunks ?? []).map((h, i) => (
               <div key={i} className="text-muted-foreground font-mono">
                 旧 {h.old_start}-{h.old_start + h.old_lines - 1} → 新 {h.new_start}-
                 {h.new_start + h.new_lines - 1}
@@ -100,10 +100,10 @@ function ChangeFileRow({ file }: { file: ChangeFile }) {
             ))}
           </div>
         )}
-        {file.endpoints.length > 0 && (
+        {(file.endpoints ?? []).length > 0 && (
           <div className="space-y-1 text-xs">
             <div className="font-medium">直接受影响接口</div>
-            {file.endpoints.map((ep, i) => (
+            {(file.endpoints ?? []).map((ep, i) => (
               <div key={i} className="flex flex-wrap items-center gap-2 font-mono">
                 <Badge variant="outline">{ep.method}</Badge>
                 <span>{ep.path}</span>
