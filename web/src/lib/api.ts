@@ -1148,9 +1148,15 @@ export const api = {
   startProjectAudit: (id: number, mode: "full" | "incremental" = "full") =>
     post<{ audit: ProjectAuditRun; upload_id: string; state: string }>(`/projects/${id}/audit`, { mode }),
   prepareIncrementalAudit: (id: number) => post<ProjectAuditRun>(`/projects/${id}/incremental-prepare`),
-  startIncrementalAudit: (id: number, runID: number, manualCells: ManualCellSpec[] = []) =>
+  startIncrementalAudit: (
+    id: number,
+    runID: number,
+    manualCells: ManualCellSpec[] = [],
+    excludedCellKeys: string[] = [],
+  ) =>
     post<{ audit: ProjectAuditRun; task_id: number }>(`/projects/${id}/incremental-runs/${runID}/start`, {
       manual_cells: manualCells,
+      excluded_cell_keys: excludedCellKeys,
     }),
   projectGapCells: (id: number, runID: number) =>
     get<{ cells: IncrementalGapCell[] }>(`/projects/${id}/incremental-runs/${runID}/gap-cells`),

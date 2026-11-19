@@ -182,6 +182,7 @@ function DetailInner() {
   const [startingIncremental, setStartingIncremental] = React.useState(false);
   const [gapCells, setGapCells] = React.useState<IncrementalGapCell[]>([]);
   const [manualSelections, setManualSelections] = React.useState<Record<string, string>>({});
+  const [rejectedRiskKeys, setRejectedRiskKeys] = React.useState<Set<string>>(new Set());
   const [detailsOpen, setDetailsOpen] = React.useState(false);
   const [incrementalTab, setIncrementalTab] = React.useState<"unreviewed" | "reviewed">("unreviewed");
   const [reviewDialogOpen, setReviewDialogOpen] = React.useState(false);
@@ -363,7 +364,12 @@ function DetailInner() {
         );
         return [{ method, url, vulnclass: known?.vulnclass ?? value }];
       });
-      const res = await api.startIncrementalAudit(p.id, preparedRun.id, manualCells);
+      const res = await api.startIncrementalAudit(
+        p.id,
+        preparedRun.id,
+        manualCells,
+        [...rejectedRiskKeys],
+      );
       setAudits((prev) => [res.audit, ...prev.filter((r) => r.id !== res.audit.id)]);
       toast.success("增量审计任务已创建");
       router.push(`/function/tasks/detail?id=${res.task_id}`);
@@ -391,7 +397,7 @@ function DetailInner() {
   const preparedRun = audits[0]?.status === "prepared" ? audits[0] : null;
   const affectedEndpoints = new Set<string>(preparedRun?.delta_gaps ?? []);
   const autoRiskEndpoints = new Set<string>();
-  const autoRiskByEndpoint = new Map<string, string[]>();
+  const autoRiskByEndpoint = new Map<string, { cellKey: string; vulnclass: string }[]>();
   for (const key of preparedRun?.delta_cell_keys ?? []) {
     const i = key.lastIndexOf(":");
     if (i > 0) {
@@ -400,15 +406,19 @@ function DetailInner() {
       affectedEndpoints.add(url);
       autoRiskEndpoints.add(url);
       const types = autoRiskByEndpoint.get(url) ?? [];
-      if (!types.includes(vuln)) types.push(vuln);
+      if (!types.some((item) => item.cellKey === key)) types.push({ cellKey: key, vulnclass: vuln });
       autoRiskByEndpoint.set(url, types);
     }
   }
+  const autoRiskRows = [...autoRiskByEndpoint.entries()]
+    .map(([url, cells]) => ({ url, cells: cells.filter((cell) => !rejectedRiskKeys.has(cell.cellKey)) }))
+    .filter((row) => row.cells.length > 0);
 
   React.useEffect(() => {
     if (!p || !preparedRun || preparedRun.delta_gaps.length === 0) {
       setGapCells([]);
       setManualSelections({});
+      setRejectedRiskKeys(new Set());
       return;
     }
     let alive = true;
@@ -418,6 +428,7 @@ function DetailInner() {
         if (alive) {
           setGapCells(res.cells);
           setManualSelections({});
+          setRejectedRiskKeys(new Set());
         }
       })
       .catch(() => {
@@ -747,44 +758,57 @@ function DetailInner() {
                 {autoRiskEndpoints.size} 个接口可能存在风险，已录入矩阵；未变更格从基线任务只读继承。
               </div>
 
-              <div className={`mt-3 grid gap-3 ${(preparedRun.delta_gaps?.length ?? 0) > 0 ? "lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]" : ""}`}>
-                <div className="overflow-hidden rounded-md border bg-background/60">
-                  <div className="border-b px-3 py-2 text-xs font-medium">增量分析 · 接口风险类型</div>
-                  <table className="w-full text-left text-[11px]">
-                    <thead className="text-muted-foreground border-b">
-                      <tr>
-                        <th className="px-3 py-1.5 font-medium">接口</th>
-                        <th className="px-3 py-1.5 font-medium">自动分析发现的风险类型</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[...affectedEndpoints].sort().map((label) => {
-                        const url = label.includes(" ") ? label.slice(label.indexOf(" ") + 1) : label;
-                        const types = autoRiskByEndpoint.get(url) ?? [];
-                        return (
-                          <tr key={label} className="border-b last:border-b-0">
-                            <td className="max-w-64 truncate px-3 py-1.5 font-mono" title={label}>
-                              {label}
+              <div className={`mt-3 grid gap-3 ${autoRiskRows.length > 0 && (preparedRun.delta_gaps?.length ?? 0) > 0 ? "lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]" : ""}`}>
+                {autoRiskRows.length > 0 && (
+                  <div className="overflow-hidden rounded-md border bg-background/60">
+                    <div className="flex items-center justify-between gap-2 border-b px-3 py-2 text-xs font-medium">
+                      <span>增量分析 · 自动发现的风险类型</span>
+                      {rejectedRiskKeys.size > 0 && (
+                        <span className="text-muted-foreground flex items-center gap-1 font-normal">
+                          已否定 {rejectedRiskKeys.size} 项
+                          <button type="button" className="underline underline-offset-2" onClick={() => setRejectedRiskKeys(new Set())}>
+                            恢复
+                          </button>
+                        </span>
+                      )}
+                    </div>
+                    <table className="w-full text-left text-[11px]">
+                      <thead className="text-muted-foreground border-b">
+                        <tr>
+                          <th className="px-3 py-1.5 font-medium">接口</th>
+                          <th className="px-3 py-1.5 font-medium">自动发现的风险类型</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {autoRiskRows.map((row) => (
+                          <tr key={row.url} className="border-b last:border-b-0">
+                            <td className="max-w-64 truncate px-3 py-1.5 font-mono" title={row.url}>
+                              {row.url}
                             </td>
                             <td className="px-3 py-1.5">
-                              {types.length > 0 ? (
-                                <div className="flex flex-wrap gap-1">
-                                  {types.map((vuln) => (
-                                    <Badge key={vuln} variant="outline" className="font-normal">
-                                      {vulnLabel(vuln)}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              ) : (
-                                <span className="text-muted-foreground">未发现适用类型（矩阵 N/A），可人工指定</span>
-                              )}
+                              <div className="flex flex-wrap gap-1">
+                                {row.cells.map((cell) => (
+                                  <Badge key={cell.cellKey} variant="outline" className="gap-1 pr-1 font-normal">
+                                    {vulnLabel(cell.vulnclass)}
+                                    <button
+                                      type="button"
+                                      className="text-muted-foreground hover:text-foreground rounded px-0.5"
+                                      aria-label={`否定 ${vulnLabel(cell.vulnclass)}`}
+                                      title="否定该自动分析结果，不纳入本次审计"
+                                      onClick={() => setRejectedRiskKeys((prev) => new Set(prev).add(cell.cellKey))}
+                                    >
+                                      ×
+                                    </button>
+                                  </Badge>
+                                ))}
+                              </div>
                             </td>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
 
                 {(preparedRun.delta_gaps?.length ?? 0) > 0 && (
                   <div className="overflow-hidden rounded-md border bg-background/60">

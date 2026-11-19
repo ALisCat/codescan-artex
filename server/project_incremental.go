@@ -625,9 +625,10 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var req struct {
-		AutoStart      *bool            `json:"auto_start"`
-		ManualCells    []manualCellSpec `json:"manual_cells"`
-		ManualCellKeys []string         `json:"manual_cell_keys"`
+		AutoStart        *bool            `json:"auto_start"`
+		ManualCells      []manualCellSpec `json:"manual_cells"`
+		ManualCellKeys   []string         `json:"manual_cell_keys"`
+		ExcludedCellKeys []string         `json:"excluded_cell_keys"`
 	}
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&req)
@@ -669,15 +670,21 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 			}
 		}
 	}
-	if len(run.DeltaCellKeys) == 0 && len(manualByEndpoint) == 0 {
-		writeErr(w, 409, "本次没有可审计的 delta 格，请先选择人工审计类型")
-		return
+	excluded := make(map[string]bool, len(req.ExcludedCellKeys))
+	for _, key := range req.ExcludedCellKeys {
+		if key = strings.TrimSpace(key); key != "" {
+			excluded[key] = true
+		}
 	}
 	deltaAllowed := make(map[string]bool, len(run.DeltaCellKeys))
 	for _, key := range run.DeltaCellKeys {
-		if key = strings.TrimSpace(key); key != "" {
+		if key = strings.TrimSpace(key); key != "" && !excluded[key] {
 			deltaAllowed[key] = true
 		}
+	}
+	if len(deltaAllowed) == 0 && len(manualByEndpoint) == 0 {
+		writeErr(w, 409, "本次没有可审计的矩阵格，请保留自动类型或选择人工审计类型")
+		return
 	}
 	templates := make(map[string]db.CellInput)
 	for _, cell := range fullBody.Tasks {
