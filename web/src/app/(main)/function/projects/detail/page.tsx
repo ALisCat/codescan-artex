@@ -368,6 +368,31 @@ function DetailInner() {
     }
   }
 
+  const preparedRun = audits[0]?.status === "prepared" ? audits[0] : null;
+
+  React.useEffect(() => {
+    if (!p || !preparedRun || preparedRun.delta_gaps.length === 0) {
+      setGapCells([]);
+      setManualSelections({});
+      return;
+    }
+    let alive = true;
+    api
+      .projectGapCells(p.id, preparedRun.id)
+      .then((res) => {
+        if (alive) {
+          setGapCells(res.cells);
+          setManualSelections({});
+        }
+      })
+      .catch(() => {
+        if (alive) setGapCells([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [p, preparedRun]);
+
   if (loading) {
     return (
       <div className="text-muted-foreground flex flex-1 items-center justify-center gap-2 py-24 text-sm">
@@ -421,30 +446,6 @@ function DetailInner() {
   const activeWarnings = activeScope?.warnings ?? [];
   const activeBase = activeScope?.base_commit || (incrementalTab === "unreviewed" ? preview?.review_base_commit : preview?.base_commit);
   const activeTarget = activeScope?.target_commit || preview?.target_commit;
-  const preparedRun = audits[0]?.status === "prepared" ? audits[0] : null;
-
-  React.useEffect(() => {
-    if (!p || !preparedRun || preparedRun.delta_gaps.length === 0) {
-      setGapCells([]);
-      setManualSelections({});
-      return;
-    }
-    let alive = true;
-    api
-      .projectGapCells(p.id, preparedRun.id)
-      .then((res) => {
-        if (alive) {
-          setGapCells(res.cells);
-          setManualSelections({});
-        }
-      })
-      .catch(() => {
-        if (alive) setGapCells([]);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [p, preparedRun]);
   const incrementalState = !p.last_audited_commit
     ? { label: "需要全量基线", tone: "warning" }
     : previewLoading
