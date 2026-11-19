@@ -1184,7 +1184,7 @@ export interface TaskProjectAudit {
 export interface ProjectAuditRun {
   id: number;
   project_id: number;
-  mode: "full" | "incremental";
+  mode: "full" | "incremental" | "manual_review";
   base_commit: string;
   target_commit: string;
   base_task_id?: number | null;
@@ -1196,7 +1196,7 @@ export interface ProjectAuditRun {
   delta_cell_keys: string[];
   delta_gaps: string[];
   prepared_at?: string;
-  status: "fetching" | "preparing" | "prepared" | "ready" | "audited" | "failed" | string;
+  status: "fetching" | "preparing" | "prepared" | "ready" | "review" | "audited" | "failed" | string;
   error_message: string;
   created_by?: number | null;
   created_at: string;

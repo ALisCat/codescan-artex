@@ -138,6 +138,7 @@ function DetailInner() {
   const [starting, setStarting] = React.useState(false);
   const [preparingIncremental, setPreparingIncremental] = React.useState(false);
   const [startingIncremental, setStartingIncremental] = React.useState(false);
+  const [startingReview, setStartingReview] = React.useState(false);
   const [detailsOpen, setDetailsOpen] = React.useState(false);
   const [incrementalTab, setIncrementalTab] = React.useState<"unreviewed" | "reviewed">("unreviewed");
   const [reviewDialogOpen, setReviewDialogOpen] = React.useState(false);
@@ -313,6 +314,21 @@ function DetailInner() {
       toast.error("启动增量审计失败：" + (e as Error).message);
     } finally {
       setStartingIncremental(false);
+    }
+  }
+
+  async function startReviewTask() {
+    if (!p || !preparedRun) return;
+    setStartingReview(true);
+    try {
+      const res = await api.startIncrementalReview(p.id, preparedRun.id);
+      setAudits((prev) => [res.audit, ...prev.filter((r) => r.id !== res.audit.id)]);
+      toast.success("人工复核任务已创建");
+      router.push(`/function/tasks/detail?id=${res.task_id}`);
+    } catch (e) {
+      toast.error("创建人工复核任务失败：" + (e as Error).message);
+    } finally {
+      setStartingReview(false);
     }
   }
 
@@ -552,11 +568,11 @@ function DetailInner() {
               {auditBusy ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}
               {latestAudit?.status === "fetching" ? "正在准备源码…" : "发起全量审计"}
             </Button>
-            {latestAudit?.status === "ready" && latestAudit.task_id && (
+            {latestAudit?.task_id && ["ready", "review", "running"].includes(latestAudit.status) && (
               <Button className="w-full justify-start" variant="outline" asChild>
                 <Link href={`/function/tasks/detail?id=${latestAudit.task_id}`}>
                   <CheckCircle2Icon className="size-4" />
-                  查看最近审计任务
+                  {latestAudit.mode === "manual_review" ? "打开人工复核任务" : "查看最近审计任务"}
                 </Link>
               </Button>
             )}
@@ -567,6 +583,11 @@ function DetailInner() {
                   <Badge variant="outline">{latestAudit.status}</Badge>
                 </div>
                 <div className="mt-1 font-mono">target {shortCommit(latestAudit.target_commit)}</div>
+                {latestAudit.mode === "manual_review" && (
+                  <div className="text-muted-foreground mt-1">
+                    人工复核 · 不推进审计基线
+                  </div>
+                )}
                 {latestAudit.status === "prepared" && (
                   <div className="mt-1">
                     变更文件 {latestAudit.changed_files} · delta 格 {latestAudit.delta_cells}
@@ -653,14 +674,22 @@ function DetailInner() {
                     </div>
                   )}
                 </div>
-                <Button
-                  size="sm"
-                  onClick={startIncremental}
-                  disabled={startingIncremental || preparedRun.delta_cells <= 0}
-                >
-                  {startingIncremental ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}
-                  {preparedRun.delta_cells > 0 ? "开始增量审计" : "没有 delta 格"}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    onClick={startIncremental}
+                    disabled={startingIncremental || preparedRun.delta_cells <= 0}
+                  >
+                    {startingIncremental ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}
+                    {preparedRun.delta_cells > 0 ? "开始增量审计" : "没有 delta 格"}
+                  </Button>
+                  {(preparedRun.delta_gaps?.length ?? 0) > 0 && (
+                    <Button size="sm" variant="outline" onClick={startReviewTask} disabled={startingReview}>
+                      {startingReview ? <Loader2Icon className="size-4 animate-spin" /> : <CheckCircle2Icon className="size-4" />}
+                      人工复核
+                    </Button>
+                  )}
+                </div>
               </div>
             </div>
           )}

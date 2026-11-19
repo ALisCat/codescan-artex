@@ -1310,6 +1310,11 @@ const TaskRow = React.memo(function TaskRow({
               增量
             </Badge>
           )}
+          {task.name?.includes("人工复核") && (
+            <Badge variant="outline" className="shrink-0 border-violet-500/30 font-normal text-violet-700 dark:text-violet-300">
+              人工复核
+            </Badge>
+          )}
           {task.active && <StarIcon className="size-4 shrink-0 fill-amber-400 text-amber-400" />}
           {taskIsPinned(task) && <PinIcon className="text-primary size-4 shrink-0" aria-label="已置顶" />}
           {/* 归属部门：只在后端给出部门名时展示，窄徽标不挤压名称列。 */}

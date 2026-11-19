@@ -618,10 +618,10 @@ function TaskDetailInner() {
             </a>
           ) : null}
         </div>
-        {auditContext?.audit.mode === "incremental" && (
+        {(auditContext?.audit.mode === "incremental" || auditContext?.audit.mode === "manual_review") && (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-sky-500/30 bg-sky-500/5 px-2 py-1.5 text-xs">
             <Badge variant="outline" className="border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300">
-              增量审计
+              {auditContext.audit.mode === "manual_review" ? "人工复核" : "增量审计"}
             </Badge>
             <Link
               href={`/function/projects/detail?id=${auditContext.project.id}`}
@@ -632,7 +632,11 @@ function TaskDetailInner() {
             <span className="text-muted-foreground font-mono">
               {auditContext.audit.base_commit.slice(0, 12)} → {auditContext.audit.target_commit.slice(0, 12)}
             </span>
-            <span className="text-muted-foreground">本次 {auditContext.audit.delta_cells} 个矩阵格</span>
+            <span className="text-muted-foreground">
+              {auditContext.audit.mode === "manual_review"
+                ? `矩阵未覆盖接口 ${auditContext.audit.delta_gaps.length} 个`
+                : `本次 ${auditContext.audit.delta_cells} 个矩阵格`}
+            </span>
             {auditContext.audit.base_task_id && (
               <span className="text-muted-foreground">
                 未变更格继承自{" "}

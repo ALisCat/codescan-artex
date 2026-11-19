@@ -678,3 +678,162 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		"task_id": taskID,
 	})
 }
+
+// POST /api/projects/{id}/incremental-runs/{runID}/review-task
+//
+// Creates a task shell for manual review of changed endpoints that the matrix
+// marked as not applicable. The task gets the target source and the relevant
+// matrix cells, but no automatic intents and no baseline update.
+func (s *Server) startIncrementalReviewTask(w http.ResponseWriter, r *http.Request) {
+	projectID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || projectID <= 0 {
+		writeErr(w, 400, "项目 ID 不合法")
+		return
+	}
+	runID, err := strconv.ParseInt(r.PathValue("runID"), 10, 64)
+	if err != nil || runID <= 0 {
+		writeErr(w, 400, "增量运行 ID 不合法")
+		return
+	}
+	p, err := s.m.pg.CodeProjects().Get(projectID)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if p == nil {
+		writeErr(w, 404, "项目不存在")
+		return
+	}
+	run, err := s.m.pg.CodeProjects().GetAudit(runID)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if run == nil || run.ProjectID != projectID {
+		writeErr(w, 404, "增量运行不存在")
+		return
+	}
+	if run.Mode != "incremental" || run.Status != "prepared" {
+		writeErr(w, 409, "只有 prepared 的增量运行可以创建人工复核任务")
+		return
+	}
+	if strings.TrimSpace(p.LastAuditedCommit) != strings.TrimSpace(run.BaseCommit) {
+		writeErr(w, 409, "项目审计基线已变化，请重新准备")
+		return
+	}
+	if run.BaseTaskID == nil || *run.BaseTaskID <= 0 {
+		writeErr(w, 409, "增量运行缺少基线任务")
+		return
+	}
+	if len(run.DeltaGaps) == 0 {
+		writeErr(w, 409, "该增量运行没有矩阵未覆盖接口")
+		return
+	}
+	if strings.TrimSpace(run.SourcePath) == "" {
+		writeErr(w, 409, "增量运行缺少源码快照")
+		return
+	}
+	sourceDir := filepath.Join(s.m.dir, filepath.FromSlash(run.SourcePath))
+	if fi, statErr := os.Stat(sourceDir); statErr != nil || !fi.IsDir() {
+		writeErr(w, 409, "增量源码快照不存在，请重新准备")
+		return
+	}
+	matrixPath := filepath.Join(filepath.Dir(sourceDir), "matrix", "import.json")
+	raw, err := os.ReadFile(matrixPath)
+	if err != nil {
+		writeErr(w, 409, "增量矩阵文件不存在，请重新准备")
+		return
+	}
+	var fullBody importCellsBody
+	if err := json.Unmarshal(raw, &fullBody); err != nil {
+		writeErr(w, 500, "解析增量矩阵失败："+err.Error())
+		return
+	}
+	allowed := make(map[string]bool, len(run.DeltaGaps))
+	for _, gap := range run.DeltaGaps {
+		if gap = strings.TrimSpace(gap); gap != "" {
+			allowed[gap] = true
+		}
+	}
+	body := fullBody
+	body.Tasks = make([]db.CellInput, 0)
+	for _, cell := range fullBody.Tasks {
+		label := strings.TrimSpace(cell.Endpoint.Method + " " + cell.Endpoint.URL)
+		if allowed[label] {
+			body.Tasks = append(body.Tasks, cell)
+		}
+	}
+	if len(body.Tasks) == 0 {
+		writeErr(w, 409, "缺口接口没有匹配到目标矩阵格")
+		return
+	}
+	me := currentUser(r)
+	if me == nil {
+		writeErr(w, 401, "未授权")
+		return
+	}
+	if ok, permErr := s.canCreateTask(me); permErr != nil {
+		writeErr(w, 500, permErr.Error())
+		return
+	} else if !ok {
+		writeErr(w, 403, "当前账号没有创建任务的权限")
+		return
+	}
+	baseTask, err := s.m.pg.GetTask(*run.BaseTaskID)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if baseTask == nil || strings.TrimSpace(baseTask.SourcePath) == "" {
+		writeErr(w, 409, "基线任务源码不存在，请重新准备")
+		return
+	}
+	desc := fmt.Sprintf("人工复核 GitLab 项目 %s（%s @ %s，base %s）", p.Path, projectBranch(p), shortSHA(run.TargetCommit), shortSHA(run.BaseCommit))
+	goal := "人工复核矩阵未覆盖的变更接口；默认不自动派发，只有在矩阵中人工选择漏洞类型后才发起审计。"
+	task, err := s.m.CreateTaskWithOptions(desc, goal, db.TaskCreateOptions{
+		Name:          fmt.Sprintf("%s · 人工复核 %s", p.Name, shortSHA(run.TargetCommit)),
+		CreatedBy:     &me.ID,
+		SourceTaskIDs: []int64{*run.BaseTaskID},
+	})
+	if err != nil {
+		writeErr(w, 500, "创建人工复核任务失败："+err.Error())
+		return
+	}
+	taskID, _ := strconv.ParseInt(task.ID, 10, 64)
+	relSource := filepath.ToSlash(filepath.Join("tasks", task.ID, "source"))
+	taskSource := filepath.Join(s.m.dir, filepath.FromSlash(relSource))
+	cleanup := func(msg string) {
+		_ = os.RemoveAll(taskSource)
+		if _, delErr := s.m.DeleteTask(task.ID, DeleteTaskOptions{DeleteFiles: true}); delErr != nil {
+			log.Printf("[incremental-review] 清理失败任务 #%s: %v", task.ID, delErr)
+		}
+		log.Printf("[incremental-review] run=%d 创建失败: %s", run.ID, msg)
+		writeErr(w, 500, msg)
+	}
+	if err := copyDirTree(sourceDir, taskSource); err != nil {
+		cleanup("复制复核源码失败：" + err.Error())
+		return
+	}
+	if err := s.m.pg.SetTaskSourcePath(taskID, relSource); err != nil {
+		cleanup("记录复核任务源码失败：" + err.Error())
+		return
+	}
+	s.m.SetTaskSourcePathInMemory(task.ID, relSource)
+	seed := false
+	body.Seed = &seed
+	if _, _, err := s.importMatrixCells(task, body); err != nil {
+		cleanup("导入复核矩阵失败：" + err.Error())
+		return
+	}
+	_ = s.m.SetTaskMatrixState(task.ID, "ready", "")
+	reviewRun, err := s.m.pg.CodeProjects().CreateReviewRun(projectID, *run.BaseTaskID, run.BaseRunID, run.BaseCommit, run.TargetCommit, taskID, relSource, run.DeltaGaps, &me.ID)
+	if err != nil {
+		cleanup("记录人工复核运行失败：" + err.Error())
+		return
+	}
+	log.Printf("[incremental-review] run=%d 创建人工复核任务 #%s，gaps=%d cells=%d", run.ID, task.ID, len(run.DeltaGaps), len(body.Tasks))
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"audit":   reviewRun,
+		"task_id": taskID,
+	})
+}

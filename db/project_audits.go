@@ -196,3 +196,25 @@ func (s *CodeProjectStore) GetAuditByTaskID(taskID int64) (*ProjectAuditRun, err
 	}
 	return r, err
 }
+
+// CreateReviewRun records a manual-review task for a prepared incremental run.
+// It deliberately uses status "review" so the audit reconciler never advances
+// last_audited_commit from this task.
+func (s *CodeProjectStore) CreateReviewRun(projectID, baseTaskID int64, baseRunID *int64, baseCommit, targetCommit string, taskID int64, sourcePath string, deltaGaps []string, createdBy *int64) (*ProjectAuditRun, error) {
+	if deltaGaps == nil {
+		deltaGaps = []string{}
+	}
+	gaps, err := json.Marshal(deltaGaps)
+	if err != nil {
+		return nil, err
+	}
+	var id int64
+	err = s.db.QueryRow(`
+INSERT INTO project_audit_runs(project_id,mode,base_commit,target_commit,base_task_id,base_run_id,task_id,source_path,delta_gaps,status,created_by)
+VALUES ($1,'manual_review',$2,$3,$4,$5,$6,$7,$8::jsonb,'review',$9) RETURNING id`,
+		projectID, baseCommit, targetCommit, baseTaskID, baseRunID, taskID, sourcePath, gaps, createdBy).Scan(&id)
+	if err != nil {
+		return nil, err
+	}
+	return s.GetAudit(id)
+}

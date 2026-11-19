@@ -1148,6 +1148,8 @@ export const api = {
   prepareIncrementalAudit: (id: number) => post<ProjectAuditRun>(`/projects/${id}/incremental-prepare`),
   startIncrementalAudit: (id: number, runID: number) =>
     post<{ audit: ProjectAuditRun; task_id: number }>(`/projects/${id}/incremental-runs/${runID}/start`),
+  startIncrementalReview: (id: number, runID: number) =>
+    post<{ audit: ProjectAuditRun; task_id: number }>(`/projects/${id}/incremental-runs/${runID}/review-task`),
   projectAudits: (id: number) =>
     get<{ audits: ProjectAuditRun[] | null }>(`/projects/${id}/audits`).then((r) => arr(r.audits)),
   projectAudit: (id: number, runID: number) => get<ProjectAuditRun>(`/projects/${id}/audits/${runID}`),
