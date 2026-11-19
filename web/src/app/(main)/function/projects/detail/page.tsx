@@ -37,7 +37,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api } from "@/lib/api";
-import type { ChangeFile, ChangePreview, CodeProject, IncrementalGapCell, ProjectAuditRun } from "@/lib/types";
+import type {
+  ChangeFile,
+  ChangePreview,
+  CodeProject,
+  IncrementalGapCell,
+  ManualCellSpec,
+  ProjectAuditRun,
+} from "@/lib/types";
 
 function fmtTime(v?: string) {
   if (!v) return "—";
@@ -342,8 +349,21 @@ function DetailInner() {
     if (!p || !preparedRun) return;
     setStartingIncremental(true);
     try {
-      const manualCellKeys = Object.values(manualSelections).filter(Boolean);
-      const res = await api.startIncrementalAudit(p.id, preparedRun.id, manualCellKeys);
+      const manualCells: ManualCellSpec[] = Object.entries(manualSelections).flatMap(([label, raw]) => {
+        const value = raw.trim();
+        if (!value) return [];
+        const parts = label.split(" ");
+        const method = parts.shift() ?? "";
+        const url = parts.join(" ");
+        const group = gapCells.filter((cell) => `${cell.method} ${cell.url}` === label);
+        const known = group.find(
+          (cell) =>
+            cell.vulnclass.toLowerCase() === value.toLowerCase() ||
+            vulnLabel(cell.vulnclass).toLowerCase() === value.toLowerCase(),
+        );
+        return [{ method, url, vulnclass: known?.vulnclass ?? value }];
+      });
+      const res = await api.startIncrementalAudit(p.id, preparedRun.id, manualCells);
       setAudits((prev) => [res.audit, ...prev.filter((r) => r.id !== res.audit.id)]);
       toast.success("增量审计任务已创建");
       router.push(`/function/tasks/detail?id=${res.task_id}`);
@@ -369,6 +389,16 @@ function DetailInner() {
   }
 
   const preparedRun = audits[0]?.status === "prepared" ? audits[0] : null;
+  const affectedEndpoints = new Set<string>(preparedRun?.delta_gaps ?? []);
+  const autoRiskEndpoints = new Set<string>();
+  for (const key of preparedRun?.delta_cell_keys ?? []) {
+    const i = key.lastIndexOf(":");
+    if (i > 0) {
+      const url = key.slice(0, i);
+      affectedEndpoints.add(url);
+      autoRiskEndpoints.add(url);
+    }
+  }
 
   React.useEffect(() => {
     if (!p || !preparedRun || preparedRun.delta_gaps.length === 0) {
@@ -695,7 +725,8 @@ function DetailInner() {
                     {shortCommit(preparedRun.base_commit)} → {shortCommit(preparedRun.target_commit)}
                   </div>
                   <div className="text-muted-foreground text-xs">
-                    {preparedRun.changed_files} 个变更文件 · 本次只审计 {preparedRun.delta_cells} 个矩阵格；未变更格从基线任务只读继承。
+                    {preparedRun.changed_files} 个变更文件 · 影响接口 {affectedEndpoints.size} 个，自动分析发现{" "}
+                    {autoRiskEndpoints.size} 个接口可能存在风险，已录入矩阵；未变更格从基线任务只读继承。
                   </div>
                   {(preparedRun.delta_gaps?.length ?? 0) > 0 && (
                     <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs">
@@ -724,20 +755,22 @@ function DetailInner() {
                                 <span className="mr-1 font-sans text-muted-foreground">{group.method}</span>
                                 {group.url}
                               </span>
-                              <select
-                                className="h-7 max-w-48 rounded border bg-background px-2 text-xs"
-                                value={manualSelections[label] ?? ""}
-                                onChange={(e) =>
-                                  setManualSelections((prev) => ({ ...prev, [label]: e.target.value }))
-                                }
-                              >
-                                <option value="">不指定</option>
-                                {group.cells.map((cell) => (
-                                  <option key={cell.cell_key} value={cell.cell_key}>
-                                    {vulnLabel(cell.vulnclass)}
-                                  </option>
-                                ))}
-                              </select>
+                              <>
+                                <input
+                                  list={`vuln-options-${label.replace(/[^a-zA-Z0-9_-]/g, "_")}`}
+                                  className="h-7 w-48 rounded border bg-background px-2 text-xs"
+                                  placeholder="选择或输入漏洞类型"
+                                  value={manualSelections[label] ?? ""}
+                                  onChange={(e) =>
+                                    setManualSelections((prev) => ({ ...prev, [label]: e.target.value }))
+                                  }
+                                />
+                                <datalist id={`vuln-options-${label.replace(/[^a-zA-Z0-9_-]/g, "_")}`}>
+                                  {group.cells.map((cell) => (
+                                    <option key={cell.cell_key} value={vulnLabel(cell.vulnclass)} />
+                                  ))}
+                                </datalist>
+                              </>
                             </div>
                           ))}
                         </div>

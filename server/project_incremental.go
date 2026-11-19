@@ -31,6 +31,12 @@ type incrementalDelta struct {
 	Gaps          []string
 }
 
+type manualCellSpec struct {
+	Method    string `json:"method"`
+	URL       string `json:"url"`
+	VulnClass string `json:"vulnclass"`
+}
+
 func (s *Server) findBaseAuditTask(p *db.CodeProject) (*db.Task, *db.ProjectAuditRun, error) {
 	if p == nil {
 		return nil, nil, nil
@@ -599,23 +605,6 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		writeErr(w, 409, "增量运行缺少基线任务")
 		return
 	}
-	var req struct {
-		AutoStart      *bool    `json:"auto_start"`
-		ManualCellKeys []string `json:"manual_cell_keys"`
-	}
-	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&req)
-	}
-	manualRequested := make(map[string]bool, len(req.ManualCellKeys))
-	for _, key := range req.ManualCellKeys {
-		if key = strings.TrimSpace(key); key != "" {
-			manualRequested[key] = true
-		}
-	}
-	if len(run.DeltaCellKeys) == 0 && len(manualRequested) == 0 {
-		writeErr(w, 409, "本次没有可审计的 delta 格，请先选择人工审计类型")
-		return
-	}
 	if strings.TrimSpace(run.SourcePath) == "" {
 		writeErr(w, 409, "增量运行缺少源码快照")
 		return
@@ -625,8 +614,7 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		writeErr(w, 409, "增量源码快照不存在，请重新准备")
 		return
 	}
-	matrixPath := filepath.Join(filepath.Dir(sourceDir), "matrix", "import.json")
-	raw, err := os.ReadFile(matrixPath)
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(sourceDir), "matrix", "import.json"))
 	if err != nil {
 		writeErr(w, 409, "增量矩阵文件不存在，请重新准备")
 		return
@@ -636,40 +624,119 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		writeErr(w, 500, "解析增量矩阵失败："+err.Error())
 		return
 	}
+	var req struct {
+		AutoStart      *bool            `json:"auto_start"`
+		ManualCells    []manualCellSpec `json:"manual_cells"`
+		ManualCellKeys []string         `json:"manual_cell_keys"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	// Validate manual selections against the gap endpoints. Existing matrix
+	// cells are reused; an unknown vulnerability type becomes a new manual cell.
+	gapLabels := make(map[string]bool, len(run.DeltaGaps))
+	for _, gap := range run.DeltaGaps {
+		gapLabels[strings.TrimSpace(gap)] = true
+	}
+	manualByEndpoint := make(map[string]string)
+	for _, spec := range req.ManualCells {
+		method := strings.ToUpper(strings.TrimSpace(spec.Method))
+		url := strings.TrimSpace(spec.URL)
+		vuln := strings.TrimSpace(spec.VulnClass)
+		if method == "" || url == "" || vuln == "" || len([]rune(vuln)) > 80 {
+			writeErr(w, 400, "人工审计类型参数不合法")
+			return
+		}
+		label := method + " " + url
+		if !gapLabels[label] {
+			writeErr(w, 409, "人工审计类型只能选择增量缺口接口")
+			return
+		}
+		manualByEndpoint[label] = vuln
+	}
+	// Backward compatibility for callers that still send cell keys.
+	for _, key := range req.ManualCellKeys {
+		key = strings.TrimSpace(key)
+		i := strings.LastIndexByte(key, ':')
+		if i <= 0 || i == len(key)-1 {
+			continue
+		}
+		url, vuln := key[:i], key[i+1:]
+		for label := range gapLabels {
+			if strings.HasSuffix(label, " "+url) {
+				manualByEndpoint[label] = vuln
+				break
+			}
+		}
+	}
+	if len(run.DeltaCellKeys) == 0 && len(manualByEndpoint) == 0 {
+		writeErr(w, 409, "本次没有可审计的 delta 格，请先选择人工审计类型")
+		return
+	}
 	deltaAllowed := make(map[string]bool, len(run.DeltaCellKeys))
 	for _, key := range run.DeltaCellKeys {
 		if key = strings.TrimSpace(key); key != "" {
 			deltaAllowed[key] = true
 		}
 	}
-	gapAllowed := make(map[string]bool)
+	templates := make(map[string]db.CellInput)
 	for _, cell := range fullBody.Tasks {
 		label := strings.TrimSpace(cell.Endpoint.Method + " " + cell.Endpoint.URL)
-		for _, gap := range run.DeltaGaps {
-			if label == strings.TrimSpace(gap) {
-				gapAllowed[cell.CellKey] = true
-				break
-			}
-		}
-	}
-	for key := range manualRequested {
-		if !gapAllowed[key] {
-			writeErr(w, 409, "人工审计类型只能选择增量缺口接口的矩阵格")
-			return
+		if _, exists := templates[label]; !exists {
+			templates[label] = cell
 		}
 	}
 	body := fullBody
-	body.Tasks = make([]db.CellInput, 0, len(deltaAllowed)+len(manualRequested))
+	body.Tasks = make([]db.CellInput, 0, len(deltaAllowed)+len(manualByEndpoint))
+	imported := make(map[string]bool)
+	manualFound := make(map[string]bool)
 	for _, cell := range fullBody.Tasks {
-		switch {
-		case deltaAllowed[cell.CellKey]:
+		label := strings.TrimSpace(cell.Endpoint.Method + " " + cell.Endpoint.URL)
+		if deltaAllowed[cell.CellKey] {
 			body.Tasks = append(body.Tasks, cell)
-		case manualRequested[cell.CellKey]:
-			cell.Eligibility = "applicable"
-			cell.Hold = false
-			cell.Reason = "人工指定增量审计类型"
-			body.Tasks = append(body.Tasks, cell)
+			imported[cell.CellKey] = true
+			continue
 		}
+		vuln, ok := manualByEndpoint[label]
+		if !ok || !strings.EqualFold(strings.TrimSpace(cell.VulnClass), vuln) {
+			continue
+		}
+		cell.Eligibility = "applicable"
+		cell.Hold = false
+		cell.Reason = "人工指定增量审计类型"
+		body.Tasks = append(body.Tasks, cell)
+		imported[cell.CellKey] = true
+		manualFound[label] = true
+	}
+	for label, vuln := range manualByEndpoint {
+		if manualFound[label] {
+			continue
+		}
+		parts := strings.SplitN(label, " ", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		cellKey := parts[1] + ":" + vuln
+		if imported[cellKey] {
+			continue
+		}
+		cell := db.CellInput{
+			CellKey: cellKey, VulnClass: vuln, Eligibility: "applicable",
+			Priority: 5, Bucket: "P2", Direction: "人工指定增量审计漏洞类型",
+			Checklist: append([]string(nil), manualGenericChecklist...),
+			Reason:    "人工指定增量审计类型",
+		}
+		cell.Endpoint.Method = parts[0]
+		cell.Endpoint.URL = parts[1]
+		if tpl, ok := templates[label]; ok {
+			cell.Hints = tpl.Hints
+			cell.HintsNote = tpl.HintsNote
+			cell.Trace = tpl.Trace
+			cell.Priority = tpl.Priority
+			cell.Bucket = tpl.Bucket
+		}
+		body.Tasks = append(body.Tasks, cell)
+		imported[cellKey] = true
 	}
 	if len(body.Tasks) == 0 {
 		writeErr(w, 409, "本次没有匹配到可导入的目标矩阵格")

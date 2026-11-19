@@ -1176,6 +1176,12 @@ export interface ChangePreview {
   error?: string;
 }
 
+export interface ManualCellSpec {
+  method: string;
+  url: string;
+  vulnclass: string;
+}
+
 export interface IncrementalGapCell {
   cell_key: string;
   method: string;
