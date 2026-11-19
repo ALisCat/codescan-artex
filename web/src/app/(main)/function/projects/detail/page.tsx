@@ -146,6 +146,7 @@ function DetailInner() {
   const [reviewing, setReviewing] = React.useState(false);
   const [error, setError] = React.useState("");
   const pollRef = React.useRef<number | null>(null);
+  const autoPreviewRef = React.useRef(false);
 
   const load = React.useCallback(() => {
     if (!Number.isFinite(id) || id <= 0) {
@@ -229,6 +230,13 @@ function DetailInner() {
       setPreviewLoading(false);
     }
   }
+
+  React.useEffect(() => {
+    if (!p || preview || previewLoading || previewError || autoPreviewRef.current) return;
+    if (!p.last_audited_commit || !p.last_seen_commit || p.last_seen_commit === p.last_audited_commit) return;
+    autoPreviewRef.current = true;
+    void loadPreview();
+  }, [p, preview, previewLoading, previewError]);
 
   async function markReviewed() {
     if (!p || !preview?.target_commit) {
