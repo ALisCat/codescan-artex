@@ -17,11 +17,18 @@ import (
 	"github.com/Autumn-27/artex/gitlabsrc"
 )
 
+type lineRange struct {
+	Start int
+	End   int
+}
+
 type incrementalDelta struct {
-	ChangedFiles int
-	DeltaCells   int
-	Endpoints    []string
-	ChangedPaths []string
+	ChangedFiles  int
+	DeltaCells    int
+	Endpoints     []string
+	ChangedPaths  []string
+	ChangedRanges map[string][]lineRange
+	Gaps          []string
 }
 
 func (s *Server) findBaseAuditTask(p *db.CodeProject) (*db.Task, *db.ProjectAuditRun, error) {
@@ -205,19 +212,20 @@ func (s *Server) runIncrementalPreparation(run *db.ProjectAuditRun, p *db.CodePr
 		fail("目标矩阵生成失败：" + err.Error())
 		return
 	}
-	cellKeys := deltaCellKeys(body, delta)
-	delta.DeltaCells = len(cellKeys)
-	if err := s.m.pg.CodeProjects().MarkAuditPrepared(run.ID, relSource, delta.ChangedFiles, delta.DeltaCells, cellKeys); err != nil {
+	selection := selectDeltaCells(body, delta)
+	delta.DeltaCells = len(selection.Keys)
+	delta.Gaps = selection.Gaps
+	delta.Endpoints = selection.Endpoints
+	if err := s.m.pg.CodeProjects().MarkAuditPrepared(run.ID, relSource, delta.ChangedFiles, delta.DeltaCells, selection.Keys, selection.Gaps); err != nil {
 		fail("记录增量准备结果失败：" + err.Error())
 		return
 	}
-	log.Printf("[incremental] run=%d 准备完成：files=%d delta_cells=%d endpoints=%v", run.ID, delta.ChangedFiles, delta.DeltaCells, delta.Endpoints)
+	log.Printf("[incremental] run=%d 准备完成：files=%d delta_cells=%d gaps=%d endpoints=%v", run.ID, delta.ChangedFiles, delta.DeltaCells, len(delta.Gaps), delta.Endpoints)
 }
 
 func (s *Server) applyChangedFiles(ctx context.Context, c *gitlabsrc.Client, p *db.CodeProject, targetSource, baseCommit, targetCommit string, cmp *gitlabsrc.Compare) (incrementalDelta, error) {
-	delta := incrementalDelta{}
+	delta := incrementalDelta{ChangedRanges: map[string][]lineRange{}}
 	changed := map[string]bool{}
-	endpoints := map[string]bool{}
 	for _, d := range cmp.Diffs {
 		oldPath, oldOK := safeZipPath(d.OldPath)
 		newPath, newOK := safeZipPath(d.NewPath)
@@ -253,92 +261,238 @@ func (s *Server) applyChangedFiles(ctx context.Context, c *gitlabsrc.Client, p *
 		if err := os.WriteFile(full, raw, 0o644); err != nil {
 			return delta, err
 		}
+		ranges := semanticChangedRanges(path, d.Diff)
+		if len(ranges) == 0 && d.NewFile {
+			ranges = fullFileRanges(raw)
+		}
+		if len(ranges) > 0 {
+			delta.ChangedRanges[normalizeRangePath(path)] = ranges
+		}
 		changed[path] = true
 		delta.ChangedFiles++
-		if strings.HasSuffix(strings.ToLower(path), ".java") {
-			for _, ep := range parseSpringEndpoints(raw, path) {
-				endpoints[ep.Method+" "+ep.Path] = true
-			}
-		}
-	}
-	delta.Endpoints = make([]string, 0, len(endpoints))
-	for ep := range endpoints {
-		delta.Endpoints = append(delta.Endpoints, ep)
 	}
 	delta.ChangedPaths = make([]string, 0, len(changed))
-	for p := range changed {
-		delta.ChangedPaths = append(delta.ChangedPaths, p)
+	for path := range changed {
+		delta.ChangedPaths = append(delta.ChangedPaths, path)
 	}
+	sort.Strings(delta.ChangedPaths)
 	return delta, nil
 }
 
-func deltaCellKeys(body importCellsBody, delta incrementalDelta) []string {
-	changedPaths := map[string]bool{}
-	changedBases := map[string]bool{}
-	for _, p := range delta.ChangedPaths {
-		p = strings.ToLower(strings.TrimPrefix(p, "/"))
-		changedPaths[p] = true
-		changedBases[filepath.Base(p)] = true
-	}
-	endpointPaths := map[string]bool{}
-	for _, ep := range delta.Endpoints {
-		if i := strings.IndexByte(ep, ' '); i >= 0 {
-			endpointPaths[ep[i+1:]] = true
-		}
-	}
-	keys := []string{}
-	for _, cell := range body.Tasks {
-		if cell.Eligibility != "applicable" && cell.Eligibility != "unverified" && cell.Eligibility != "needs_review" {
-			continue
-		}
-		hit := endpointPaths[cell.Endpoint.URL]
-		if !hit {
-			for _, f := range deltaEndpointsFromHints(cell.Hints) {
-				f = strings.ToLower(strings.TrimPrefix(f, "/"))
-				if changedPaths[f] || changedBases[filepath.Base(f)] {
-					hit = true
-					break
-				}
-			}
-		}
-		if !hit {
-			// Repo-level cells sometimes carry only a short site string.
-			blob := strings.ToLower(string(cell.Hints) + " " + cell.Direction)
-			for base := range changedBases {
-				if base != "" && strings.Contains(blob, base) {
-					hit = true
-					break
-				}
-			}
-		}
-		if hit {
-			keys = append(keys, cell.CellKey)
-		}
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func deltaEndpointsFromHints(raw json.RawMessage) []string {
-	var h struct {
-		Flow []struct {
-			File string `json:"file"`
-		} `json:"flow"`
-		Sites []struct {
-			File string `json:"file"`
-		} `json:"sites"`
-	}
-	if json.Unmarshal(raw, &h) != nil {
+// semanticChangedRanges returns target-file line ranges that contain an actual
+// code change. Comment-only and whitespace-only edits deliberately produce no
+// ranges. The range is later intersected with matrix hint line ranges.
+func semanticChangedRanges(path, diff string) []lineRange {
+	if strings.TrimSpace(diff) == "" {
 		return nil
 	}
-	var out []string
-	for _, f := range h.Flow {
-		out = append(out, f.File)
+	var points []int
+	newLine := 0
+	inBlock := false
+	for _, line := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(line, "@@") {
+			if m := diffHunkRE.FindStringSubmatch(line); m != nil {
+				newLine, _ = strconv.Atoi(m[3])
+			}
+			inBlock = false
+			continue
+		}
+		if newLine <= 0 || line == "" {
+			continue
+		}
+		switch line[0] {
+		case '+':
+			if strings.HasPrefix(line, "+++") {
+				continue
+			}
+			if semanticDiffLine(path, line[1:], &inBlock) {
+				points = append(points, newLine)
+			}
+			newLine++
+		case '-':
+			if strings.HasPrefix(line, "---") {
+				continue
+			}
+			if semanticDiffLine(path, line[1:], &inBlock) {
+				points = append(points, newLine)
+			}
+		case ' ':
+			semanticDiffLine(path, line[1:], &inBlock)
+			newLine++
+		}
 	}
-	for _, s := range h.Sites {
-		out = append(out, s.File)
+	return pointsToRanges(points)
+}
+
+func semanticDiffLine(path, line string, inBlock *bool) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return false
+	}
+	lower := strings.ToLower(path)
+	isJava := strings.HasSuffix(lower, ".java")
+	isMarkup := strings.HasSuffix(lower, ".xml") || strings.HasSuffix(lower, ".html") || strings.HasSuffix(lower, ".htm")
+	isSQL := strings.HasSuffix(lower, ".sql")
+	if isJava {
+		if *inBlock {
+			if strings.Contains(trimmed, "*/") {
+				*inBlock = false
+			}
+			return false
+		}
+		if strings.HasPrefix(trimmed, "/*") {
+			if !strings.Contains(trimmed, "*/") {
+				*inBlock = true
+			}
+			return false
+		}
+		return !strings.HasPrefix(trimmed, "//") && !strings.HasPrefix(trimmed, "*")
+	}
+	if isMarkup {
+		if *inBlock {
+			if strings.Contains(trimmed, "-->") {
+				*inBlock = false
+			}
+			return false
+		}
+		if strings.HasPrefix(trimmed, "<!--") {
+			if !strings.Contains(trimmed, "-->") {
+				*inBlock = true
+			}
+			return false
+		}
+		return true
+	}
+	if isSQL {
+		return !strings.HasPrefix(trimmed, "--")
+	}
+	return true
+}
+
+func pointsToRanges(points []int) []lineRange {
+	if len(points) == 0 {
+		return nil
+	}
+	sort.Ints(points)
+	out := make([]lineRange, 0, len(points))
+	for _, point := range points {
+		if point <= 0 {
+			continue
+		}
+		if len(out) == 0 || point > out[len(out)-1].End+1 {
+			out = append(out, lineRange{Start: point, End: point})
+			continue
+		}
+		out[len(out)-1].End = point
 	}
 	return out
+}
+
+func fullFileRanges(raw []byte) []lineRange {
+	lines := strings.Split(string(raw), "\n")
+	n := len(lines)
+	if n > 0 && lines[n-1] == "" {
+		n--
+	}
+	if n <= 0 {
+		return nil
+	}
+	return []lineRange{{Start: 1, End: n}}
+}
+
+type deltaSelection struct {
+	Keys      []string
+	Gaps      []string
+	Endpoints []string
+}
+
+func selectDeltaCells(body importCellsBody, delta incrementalDelta) deltaSelection {
+	selection := deltaSelection{Keys: []string{}, Gaps: []string{}, Endpoints: []string{}}
+	if len(delta.ChangedRanges) == 0 {
+		return selection
+	}
+	affected := map[string]bool{}
+	eligible := map[string]bool{}
+	for _, cell := range body.Tasks {
+		if !cellTouchedByRanges(cell, delta.ChangedRanges) {
+			continue
+		}
+		endpoint := strings.TrimSpace(cell.Endpoint.Method + " " + cell.Endpoint.URL)
+		affected[endpoint] = true
+		switch strings.TrimSpace(cell.Eligibility) {
+		case "applicable", "unverified", "needs_review", "":
+			eligible[endpoint] = true
+			selection.Keys = append(selection.Keys, cell.CellKey)
+		}
+	}
+	for endpoint := range affected {
+		selection.Endpoints = append(selection.Endpoints, endpoint)
+		if !eligible[endpoint] {
+			selection.Gaps = append(selection.Gaps, endpoint)
+		}
+	}
+	sort.Strings(selection.Keys)
+	sort.Strings(selection.Gaps)
+	sort.Strings(selection.Endpoints)
+	return selection
+}
+
+func cellTouchedByRanges(cell db.CellInput, ranges map[string][]lineRange) bool {
+	if len(ranges) == 0 {
+		return false
+	}
+	var hints struct {
+		Flow []struct {
+			File string `json:"file"`
+			Line int    `json:"line"`
+			End  int    `json:"end"`
+		} `json:"flow"`
+		Sites []struct {
+			File    string `json:"file"`
+			Line    int    `json:"line"`
+			End     int    `json:"end"`
+			SQLFile string `json:"sql_file"`
+			SQLLine int    `json:"sql_line"`
+		} `json:"sites"`
+	}
+	if len(cell.Hints) > 0 {
+		if err := json.Unmarshal(cell.Hints, &hints); err != nil {
+			return false
+		}
+	}
+	for _, flow := range hints.Flow {
+		if lineRangeOverlaps(ranges, flow.File, flow.Line, flow.End) {
+			return true
+		}
+	}
+	for _, site := range hints.Sites {
+		if lineRangeOverlaps(ranges, site.File, site.Line, site.End) {
+			return true
+		}
+		if lineRangeOverlaps(ranges, site.SQLFile, site.SQLLine, site.SQLLine) {
+			return true
+		}
+	}
+	return false
+}
+
+func lineRangeOverlaps(ranges map[string][]lineRange, file string, start, end int) bool {
+	if file == "" || start <= 0 {
+		return false
+	}
+	if end < start {
+		end = start
+	}
+	for _, r := range ranges[normalizeRangePath(file)] {
+		if r.Start <= end && start <= r.End {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeRangePath(path string) string {
+	return filepath.ToSlash(strings.ToLower(strings.TrimPrefix(strings.TrimSpace(path), "/")))
 }
 
 // POST /api/projects/{id}/incremental-runs/{runID}/start

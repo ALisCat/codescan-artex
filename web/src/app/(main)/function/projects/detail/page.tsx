@@ -630,6 +630,15 @@ function DetailInner() {
                   <div className="text-muted-foreground text-xs">
                     {preparedRun.changed_files} 个变更文件 · 本次只审计 {preparedRun.delta_cells} 个矩阵格；未变更格从基线任务只读继承。
                   </div>
+                  {(preparedRun.delta_gaps?.length ?? 0) > 0 && (
+                    <div className="text-xs text-amber-700 dark:text-amber-300">
+                      覆盖缺口：{preparedRun.delta_gaps.length} 个变更接口没有适用的矩阵格，需要人工确认或全量审计。
+                      <div className="mt-1 font-mono text-[11px]">
+                        {preparedRun.delta_gaps.slice(0, 5).join("、")}
+                        {preparedRun.delta_gaps.length > 5 ? " 等" : ""}
+                      </div>
+                    </div>
+                  )}
                   {preparedRun.base_task_id && (
                     <div className="text-muted-foreground text-xs">
                       基线任务{" "}

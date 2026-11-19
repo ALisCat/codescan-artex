@@ -1657,6 +1657,7 @@ CREATE TABLE IF NOT EXISTS project_audit_runs (
     changed_files   INTEGER NOT NULL DEFAULT 0,
     delta_cells     INTEGER NOT NULL DEFAULT 0,
     delta_cell_keys JSONB NOT NULL DEFAULT '[]'::jsonb,
+    delta_gaps      JSONB NOT NULL DEFAULT '[]'::jsonb,
     prepared_at     TIMESTAMPTZ,
     status          TEXT NOT NULL DEFAULT 'fetching',
     error_message   TEXT NOT NULL DEFAULT '',
@@ -1670,5 +1671,6 @@ ALTER TABLE project_audit_runs ADD COLUMN IF NOT EXISTS source_path TEXT NOT NUL
 ALTER TABLE project_audit_runs ADD COLUMN IF NOT EXISTS changed_files INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE project_audit_runs ADD COLUMN IF NOT EXISTS delta_cells INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE project_audit_runs ADD COLUMN IF NOT EXISTS delta_cell_keys JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE project_audit_runs ADD COLUMN IF NOT EXISTS delta_gaps JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE project_audit_runs ADD COLUMN IF NOT EXISTS prepared_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_project_audit_runs_project ON project_audit_runs(project_id, id DESC);

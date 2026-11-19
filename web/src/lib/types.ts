@@ -1194,6 +1194,7 @@ export interface ProjectAuditRun {
   changed_files: number;
   delta_cells: number;
   delta_cell_keys: string[];
+  delta_gaps: string[];
   prepared_at?: string;
   status: "fetching" | "preparing" | "prepared" | "ready" | "audited" | "failed" | string;
   error_message: string;

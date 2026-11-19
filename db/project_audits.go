@@ -19,6 +19,7 @@ type ProjectAuditRun struct {
 	ChangedFiles  int        `json:"changed_files"`
 	DeltaCells    int        `json:"delta_cells"`
 	DeltaCellKeys []string   `json:"delta_cell_keys"`
+	DeltaGaps     []string   `json:"delta_gaps"`
 	PreparedAt    *time.Time `json:"prepared_at,omitempty"`
 	Status        string     `json:"status"`
 	ErrorMessage  string     `json:"error_message"`
@@ -27,7 +28,7 @@ type ProjectAuditRun struct {
 	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
-const projectAuditCols = `id,project_id,mode,base_commit,target_commit,base_task_id,base_run_id,task_id,source_path,changed_files,delta_cells,delta_cell_keys,prepared_at,status,error_message,created_by,created_at,updated_at`
+const projectAuditCols = `id,project_id,mode,base_commit,target_commit,base_task_id,base_run_id,task_id,source_path,changed_files,delta_cells,delta_cell_keys,delta_gaps,prepared_at,status,error_message,created_by,created_at,updated_at`
 
 func scanProjectAudit(sc interface{ Scan(...any) error }) (*ProjectAuditRun, error) {
 	var r ProjectAuditRun
@@ -37,8 +38,9 @@ func scanProjectAudit(sc interface{ Scan(...any) error }) (*ProjectAuditRun, err
 	var preparedAt sql.NullTime
 	var createdBy sql.NullInt64
 	var deltaCellKeys []byte
+	var deltaGaps []byte
 	if err := sc.Scan(&r.ID, &r.ProjectID, &r.Mode, &r.BaseCommit, &r.TargetCommit, &baseTaskID, &baseRunID, &taskID,
-		&r.SourcePath, &r.ChangedFiles, &r.DeltaCells, &deltaCellKeys, &preparedAt,
+		&r.SourcePath, &r.ChangedFiles, &r.DeltaCells, &deltaCellKeys, &deltaGaps, &preparedAt,
 		&r.Status, &r.ErrorMessage, &createdBy, &r.CreatedAt, &r.UpdatedAt); err != nil {
 		return nil, err
 	}
@@ -49,6 +51,14 @@ func scanProjectAudit(sc interface{ Scan(...any) error }) (*ProjectAuditRun, err
 	}
 	if r.DeltaCellKeys == nil {
 		r.DeltaCellKeys = []string{}
+	}
+	if len(deltaGaps) > 0 {
+		if err := json.Unmarshal(deltaGaps, &r.DeltaGaps); err != nil {
+			return nil, err
+		}
+	}
+	if r.DeltaGaps == nil {
+		r.DeltaGaps = []string{}
 	}
 	if baseTaskID.Valid {
 		r.BaseTaskID = &baseTaskID.Int64
@@ -92,18 +102,25 @@ VALUES ($1,'incremental',$2,$3,$4,$5,'preparing',$6) RETURNING id`,
 	return s.GetAudit(id)
 }
 
-func (s *CodeProjectStore) MarkAuditPrepared(id int64, sourcePath string, changedFiles, deltaCells int, deltaCellKeys []string) error {
+func (s *CodeProjectStore) MarkAuditPrepared(id int64, sourcePath string, changedFiles, deltaCells int, deltaCellKeys, deltaGaps []string) error {
 	if deltaCellKeys == nil {
 		deltaCellKeys = []string{}
+	}
+	if deltaGaps == nil {
+		deltaGaps = []string{}
 	}
 	keys, err := json.Marshal(deltaCellKeys)
 	if err != nil {
 		return err
 	}
+	gaps, err := json.Marshal(deltaGaps)
+	if err != nil {
+		return err
+	}
 	_, err = s.db.Exec(`
 UPDATE project_audit_runs SET source_path=$2, changed_files=$3, delta_cells=$4, delta_cell_keys=$5::jsonb,
-    status='prepared', prepared_at=now(), updated_at=now() WHERE id=$1`,
-		id, sourcePath, changedFiles, deltaCells, keys)
+    delta_gaps=$6::jsonb, status='prepared', prepared_at=now(), updated_at=now() WHERE id=$1`,
+		id, sourcePath, changedFiles, deltaCells, keys, gaps)
 	return err
 }
 
