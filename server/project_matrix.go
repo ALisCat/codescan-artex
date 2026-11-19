@@ -98,7 +98,7 @@ func (s *Server) runMatrixCommand(ctx context.Context, dir, python string, args 
 // prepareTaskMatrix runs graph → analyzers → binder → import and seeds ca_cells.
 // It is intentionally called only after the source tree has been attached and
 // before the task is launched.
-func (s *Server) prepareTaskMatrix(ctx context.Context, t *Task) (int, int, error) {
+func (s *Server) prepareTaskMatrix(ctx context.Context, t *Task, requireCells bool) (int, int, error) {
 	if t == nil || strings.TrimSpace(t.SourcePath) == "" {
 		return 0, 0, fmt.Errorf("任务没有源码目录")
 	}
@@ -113,6 +113,9 @@ func (s *Server) prepareTaskMatrix(ctx context.Context, t *Task) (int, int, erro
 	sourceDir := filepath.Join(s.m.dir, filepath.FromSlash(t.SourcePath))
 	if fi, err := os.Stat(sourceDir); err != nil || !fi.IsDir() {
 		return 0, 0, fmt.Errorf("任务源码目录不存在: %s", sourceDir)
+	}
+	if err := normalizeSingleSourceRoot(sourceDir); err != nil {
+		return 0, 0, fmt.Errorf("归一化源码目录失败: %w", err)
 	}
 	outDir := filepath.Join(s.m.dir, "tasks", t.ID, "matrix")
 	if err := os.RemoveAll(outDir); err != nil {
@@ -146,10 +149,92 @@ func (s *Server) prepareTaskMatrix(ctx context.Context, t *Task) (int, int, erro
 	if err := json.Unmarshal(raw, &body); err != nil {
 		return 0, 0, fmt.Errorf("解析矩阵导入体失败: %w", err)
 	}
+	if len(body.Tasks) == 0 && !requireCells {
+		log.Printf("[matrix] task %s 没有可派发矩阵格，保留标准任务路径", t.ID)
+		return 0, 0, nil
+	}
 	cells, seeded, err := s.importMatrixCells(t, body)
 	if err != nil {
 		return 0, 0, err
 	}
 	log.Printf("[matrix] task %s 导入 %d 格，生成 %d 个矩阵意图", t.ID, cells, seeded)
 	return cells, seeded, nil
+}
+
+// normalizeSingleSourceRoot strips the common one-directory wrapper produced by
+// local zip uploads (for example digital-smart-other/...). It only acts when the
+// sole child looks like a project root, so a legitimate single top-level src/
+// directory is left alone.
+func normalizeSingleSourceRoot(dir string) error {
+	ents, err := os.ReadDir(dir)
+	if err != nil || len(ents) != 1 || !ents[0].IsDir() {
+		return nil
+	}
+	wrapper := filepath.Join(dir, ents[0].Name())
+	hasProjectMarker := false
+	for _, name := range []string{"pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", filepath.Join("src", "main", "java")} {
+		if _, err := os.Stat(filepath.Join(wrapper, name)); err == nil {
+			hasProjectMarker = true
+			break
+		}
+	}
+	if !hasProjectMarker {
+		return nil
+	}
+	children, err := os.ReadDir(wrapper)
+	if err != nil {
+		return err
+	}
+	for _, child := range children {
+		from := filepath.Join(wrapper, child.Name())
+		to := filepath.Join(dir, child.Name())
+		if _, err := os.Stat(to); err == nil {
+			continue
+		}
+		if err := os.Rename(from, to); err != nil {
+			return err
+		}
+	}
+	return os.Remove(wrapper)
+}
+
+func sourceHasJava(dir string) bool {
+	found := false
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(strings.ToLower(d.Name()), ".java") {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
+}
+
+// prepareLocalUploadMatrix is called after an uploaded/GitHub source tree has
+// been attached to a task. It is intentionally best-effort for non-Java trees and
+// returns an error only when a Java tree could not get a matrix.
+func (s *Server) prepareLocalUploadMatrix(t *Task) error {
+	if t == nil || strings.TrimSpace(t.SourcePath) == "" {
+		return nil
+	}
+	sourceDir := filepath.Join(s.m.dir, filepath.FromSlash(t.SourcePath))
+	if fi, err := os.Stat(sourceDir); err != nil || !fi.IsDir() {
+		return fmt.Errorf("任务源码目录不存在: %s", sourceDir)
+	}
+	if err := normalizeSingleSourceRoot(sourceDir); err != nil {
+		return fmt.Errorf("归一化源码目录失败: %w", err)
+	}
+	if !sourceHasJava(sourceDir) {
+		log.Printf("[matrix] task %s 没有 Java 源码，跳过矩阵流水线", t.ID)
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if _, _, err := s.prepareTaskMatrix(ctx, t, false); err != nil {
+		return err
+	}
+	return nil
 }

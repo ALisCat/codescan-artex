@@ -199,7 +199,7 @@ func (s *Server) runProjectFullAudit(run *db.ProjectAuditRun, p *db.CodeProject,
 	}
 	// 项目审计必须走矩阵：源码就绪后先跑图/分析器/绑定/导入，再启动任务。
 	// 失败时删除任务，避免留下一个“看起来正常、实际上走标准 planner”的审计任务。
-	if _, _, err := s.prepareTaskMatrix(ctx, task); err != nil {
+	if _, _, err := s.prepareTaskMatrix(ctx, task, true); err != nil {
 		fail("生成审计矩阵失败：" + err.Error())
 		return
 	}

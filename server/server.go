@@ -1711,6 +1711,15 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
+	// 本地 zip / 仓库导入任务也走矩阵：源码就绪后先建矩阵，再允许开跑。
+	// 非 Java 源码跳过；Java 源码矩阵失败则删除任务，避免留下无矩阵的“假审计任务”。
+	if err := s.prepareLocalUploadMatrix(t); err != nil {
+		if _, derr := s.m.DeleteTask(t.ID, DeleteTaskOptions{DeleteFiles: true}); derr != nil {
+			log.Printf("[task] 清理矩阵失败任务: %v", derr)
+		}
+		writeErr(w, 500, "生成审计矩阵失败："+err.Error())
+		return
+	}
 	log.Printf("[task] 新建任务 #%s «%s» 部门=%v", t.ID, req.Description, req.DepartmentID)
 	// 是否立即开跑：web 端默认「先创建、再由用户进任务详情手动开启」，所以只有显式
 	// auto_start=true（或编排 spawn 路径）才会走 launchTask。
