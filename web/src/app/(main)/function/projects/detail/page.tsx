@@ -391,12 +391,17 @@ function DetailInner() {
   const preparedRun = audits[0]?.status === "prepared" ? audits[0] : null;
   const affectedEndpoints = new Set<string>(preparedRun?.delta_gaps ?? []);
   const autoRiskEndpoints = new Set<string>();
+  const autoRiskByEndpoint = new Map<string, string[]>();
   for (const key of preparedRun?.delta_cell_keys ?? []) {
     const i = key.lastIndexOf(":");
     if (i > 0) {
       const url = key.slice(0, i);
+      const vuln = key.slice(i + 1);
       affectedEndpoints.add(url);
       autoRiskEndpoints.add(url);
+      const types = autoRiskByEndpoint.get(url) ?? [];
+      if (!types.includes(vuln)) types.push(vuln);
+      autoRiskByEndpoint.set(url, types);
     }
   }
 
@@ -713,100 +718,136 @@ function DetailInner() {
 
           {preparedRun && (
             <div className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-3">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="space-y-1">
-                  <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
-                    增量审计已准备
-                    <Badge variant="outline" className="border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300">
-                      run #{preparedRun.id}
-                    </Badge>
-                  </div>
-                  <div className="text-muted-foreground font-mono text-xs">
-                    {shortCommit(preparedRun.base_commit)} → {shortCommit(preparedRun.target_commit)}
-                  </div>
-                  <div className="text-muted-foreground text-xs">
-                    {preparedRun.changed_files} 个变更文件 · 影响接口 {affectedEndpoints.size} 个，自动分析发现{" "}
-                    {autoRiskEndpoints.size} 个接口可能存在风险，已录入矩阵；未变更格从基线任务只读继承。
-                  </div>
-                  {(preparedRun.delta_gaps?.length ?? 0) > 0 && (
-                    <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs">
-                      <div className="font-medium text-amber-800 dark:text-amber-200">
-                        新增/变更接口当前矩阵未覆盖，可人工指定审计类型
-                      </div>
-                      <div className="text-muted-foreground">
-                        这些接口在矩阵中全部为 N/A。选择类型后，点击「开始增量审计」会把对应矩阵格加入任务。
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium">增量审计已准备</span>
+                  <Badge variant="outline" className="border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300">
+                    run #{preparedRun.id}
+                  </Badge>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={startIncremental}
+                  disabled={
+                    startingIncremental ||
+                    (preparedRun.delta_cells <= 0 && Object.values(manualSelections).every((v) => !v))
+                  }
+                >
+                  {startingIncremental ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}
+                  {preparedRun.delta_cells > 0 || Object.values(manualSelections).some(Boolean)
+                    ? "开始增量审计"
+                    : "请选择人工审计类型"}
+                </Button>
+              </div>
+              <div className="text-muted-foreground mt-2 font-mono text-xs">
+                {shortCommit(preparedRun.base_commit)} → {shortCommit(preparedRun.target_commit)}
+              </div>
+              <div className="text-muted-foreground mt-1 text-xs">
+                {preparedRun.changed_files} 个变更文件 · 影响接口 {affectedEndpoints.size} 个，自动分析发现{" "}
+                {autoRiskEndpoints.size} 个接口可能存在风险，已录入矩阵；未变更格从基线任务只读继承。
+              </div>
+
+              <div className={`mt-3 grid gap-3 ${(preparedRun.delta_gaps?.length ?? 0) > 0 ? "lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]" : ""}`}>
+                <div className="overflow-hidden rounded-md border bg-background/60">
+                  <div className="border-b px-3 py-2 text-xs font-medium">增量分析 · 接口风险类型</div>
+                  <table className="w-full text-left text-[11px]">
+                    <thead className="text-muted-foreground border-b">
+                      <tr>
+                        <th className="px-3 py-1.5 font-medium">接口</th>
+                        <th className="px-3 py-1.5 font-medium">自动分析发现的风险类型</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...affectedEndpoints].sort().map((label) => {
+                        const url = label.includes(" ") ? label.slice(label.indexOf(" ") + 1) : label;
+                        const types = autoRiskByEndpoint.get(url) ?? [];
+                        return (
+                          <tr key={label} className="border-b last:border-b-0">
+                            <td className="max-w-64 truncate px-3 py-1.5 font-mono" title={label}>
+                              {label}
+                            </td>
+                            <td className="px-3 py-1.5">
+                              {types.length > 0 ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {types.map((vuln) => (
+                                    <Badge key={vuln} variant="outline" className="font-normal">
+                                      {vulnLabel(vuln)}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-muted-foreground">未发现适用类型（矩阵 N/A），可人工指定</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {(preparedRun.delta_gaps?.length ?? 0) > 0 && (
+                  <div className="overflow-hidden rounded-md border bg-background/60">
+                    <div className="border-b px-3 py-2 text-xs font-medium">新增/变更接口 · 人工指定审计类型</div>
+                    <div className="space-y-1.5 p-2">
+                      <div className="text-muted-foreground px-1 pb-1 text-[11px]">
+                        这些接口当前矩阵全部 N/A；选择或输入类型后，点击「开始增量审计」会把对应格加入任务。
                       </div>
                       {gapCells.length === 0 ? (
-                        <div className="text-muted-foreground font-mono text-[11px]">
+                        <div className="text-muted-foreground p-1 font-mono text-[11px]">
                           {preparedRun.delta_gaps.join("、")}
                         </div>
                       ) : (
-                        <div className="space-y-1.5">
-                          {Object.entries(
-                            gapCells.reduce<Record<string, { method: string; url: string; cells: IncrementalGapCell[] }>>((acc, cell) => {
-                              const key = `${cell.method} ${cell.url}`;
-                              if (!acc[key]) acc[key] = { method: cell.method, url: cell.url, cells: [] };
-                              acc[key].cells.push(cell);
-                              return acc;
-                            }, {}),
-                          ).map(([label, group]) => (
-                            <div key={label} className="flex flex-wrap items-center justify-between gap-2 rounded border bg-background/60 px-2 py-1.5">
-                              <span className="min-w-0 break-all font-mono text-[11px]">
-                                <span className="mr-1 font-sans text-muted-foreground">{group.method}</span>
-                                {group.url}
-                              </span>
-                              <>
-                                <input
-                                  list={`vuln-options-${label.replace(/[^a-zA-Z0-9_-]/g, "_")}`}
-                                  className="h-7 w-48 rounded border bg-background px-2 text-xs"
-                                  placeholder="选择或输入漏洞类型"
-                                  value={manualSelections[label] ?? ""}
-                                  onChange={(e) =>
-                                    setManualSelections((prev) => ({ ...prev, [label]: e.target.value }))
-                                  }
-                                />
-                                <datalist id={`vuln-options-${label.replace(/[^a-zA-Z0-9_-]/g, "_")}`}>
-                                  {group.cells.map((cell) => (
-                                    <option key={cell.cell_key} value={vulnLabel(cell.vulnclass)} />
-                                  ))}
-                                </datalist>
-                              </>
-                            </div>
-                          ))}
-                        </div>
+                        Object.entries(
+                          gapCells.reduce<Record<string, { method: string; url: string; cells: IncrementalGapCell[] }>>((acc, cell) => {
+                            const key = `${cell.method} ${cell.url}`;
+                            if (!acc[key]) acc[key] = { method: cell.method, url: cell.url, cells: [] };
+                            acc[key].cells.push(cell);
+                            return acc;
+                          }, {}),
+                        ).map(([label, group]) => (
+                          <div key={label} className="flex flex-wrap items-center justify-between gap-2 rounded border bg-background/60 px-2 py-1.5">
+                            <span className="min-w-0 break-all font-mono text-[11px]">
+                              <span className="mr-1 font-sans text-muted-foreground">{group.method}</span>
+                              {group.url}
+                            </span>
+                            <>
+                              <input
+                                list={`vuln-options-${label.replace(/[^a-zA-Z0-9_-]/g, "_")}`}
+                                className="h-7 w-48 rounded border bg-background px-2 text-xs"
+                                placeholder="选择或输入漏洞类型"
+                                value={manualSelections[label] ?? ""}
+                                onChange={(e) =>
+                                  setManualSelections((prev) => ({ ...prev, [label]: e.target.value }))
+                                }
+                              />
+                              <datalist id={`vuln-options-${label.replace(/[^a-zA-Z0-9_-]/g, "_")}`}>
+                                {group.cells.map((cell) => (
+                                  <option key={cell.cell_key} value={vulnLabel(cell.vulnclass)} />
+                                ))}
+                              </datalist>
+                            </>
+                          </div>
+                        ))
                       )}
                     </div>
-                  )}
-                  {preparedRun.base_task_id && (
-                    <div className="text-muted-foreground text-xs">
-                      基线任务{" "}
-                      <Link href={`/function/tasks/detail?id=${preparedRun.base_task_id}`} className="text-foreground underline underline-offset-2">
-                        #{preparedRun.base_task_id}
-                      </Link>
-                    </div>
-                  )}
-                  {preparedRun.target_commit !== p.last_seen_commit && (
-                    <div className="text-xs text-amber-700 dark:text-amber-300">
-                      该准备固定到旧 target；当前 HEAD 已更新，新提交会留给下一次增量。
-                    </div>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    onClick={startIncremental}
-                    disabled={
-                      startingIncremental ||
-                      (preparedRun.delta_cells <= 0 && Object.values(manualSelections).every((v) => !v))
-                    }
-                  >
-                    {startingIncremental ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}
-                    {preparedRun.delta_cells > 0 || Object.values(manualSelections).some(Boolean)
-                      ? "开始增量审计"
-                      : "请选择人工审计类型"}
-                  </Button>
-                </div>
+                  </div>
+                )}
               </div>
+
+              {preparedRun.base_task_id && (
+                <div className="text-muted-foreground mt-2 text-xs">
+                  基线任务{" "}
+                  <Link href={`/function/tasks/detail?id=${preparedRun.base_task_id}`} className="text-foreground underline underline-offset-2">
+                    #{preparedRun.base_task_id}
+                  </Link>
+                </div>
+              )}
+              {preparedRun.target_commit !== p.last_seen_commit && (
+                <div className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                  该准备固定到旧 target；当前 HEAD 已更新，新提交会留给下一次增量。
+                </div>
+              )}
             </div>
           )}
 
