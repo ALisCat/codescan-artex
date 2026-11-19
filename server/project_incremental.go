@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -173,8 +174,9 @@ func (s *Server) runIncrementalPreparation(run *db.ProjectAuditRun, p *db.CodePr
 		fail("目标矩阵生成失败：" + err.Error())
 		return
 	}
-	delta.DeltaCells = countDeltaCells(body, delta)
-	if err := s.m.pg.CodeProjects().MarkAuditPrepared(run.ID, relSource, delta.ChangedFiles, delta.DeltaCells); err != nil {
+	cellKeys := deltaCellKeys(body, delta)
+	delta.DeltaCells = len(cellKeys)
+	if err := s.m.pg.CodeProjects().MarkAuditPrepared(run.ID, relSource, delta.ChangedFiles, delta.DeltaCells, cellKeys); err != nil {
 		fail("记录增量准备结果失败：" + err.Error())
 		return
 	}
@@ -239,7 +241,7 @@ func (s *Server) applyChangedFiles(ctx context.Context, c *gitlabsrc.Client, p *
 	return delta, nil
 }
 
-func countDeltaCells(body importCellsBody, delta incrementalDelta) int {
+func deltaCellKeys(body importCellsBody, delta incrementalDelta) []string {
 	changedPaths := map[string]bool{}
 	changedBases := map[string]bool{}
 	for _, p := range delta.ChangedPaths {
@@ -253,7 +255,7 @@ func countDeltaCells(body importCellsBody, delta incrementalDelta) int {
 			endpointPaths[ep[i+1:]] = true
 		}
 	}
-	n := 0
+	keys := []string{}
 	for _, cell := range body.Tasks {
 		if cell.Eligibility != "applicable" && cell.Eligibility != "unverified" && cell.Eligibility != "needs_review" {
 			continue
@@ -279,10 +281,11 @@ func countDeltaCells(body importCellsBody, delta incrementalDelta) int {
 			}
 		}
 		if hit {
-			n++
+			keys = append(keys, cell.CellKey)
 		}
 	}
-	return n
+	sort.Strings(keys)
+	return keys
 }
 
 func deltaEndpointsFromHints(raw json.RawMessage) []string {
@@ -305,4 +308,184 @@ func deltaEndpointsFromHints(raw json.RawMessage) []string {
 		out = append(out, s.File)
 	}
 	return out
+}
+
+// POST /api/projects/{id}/incremental-runs/{runID}/start
+//
+// A prepared run has already copied the target source and generated the target
+// matrix. Starting it must not download the archive again or regenerate the
+// matrix. Only the persisted delta cells are imported into the task, so the
+// unchanged target cells keep their base-task conclusions.
+func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Request) {
+	projectID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || projectID <= 0 {
+		writeErr(w, 400, "项目 ID 不合法")
+		return
+	}
+	runID, err := strconv.ParseInt(r.PathValue("runID"), 10, 64)
+	if err != nil || runID <= 0 {
+		writeErr(w, 400, "增量运行 ID 不合法")
+		return
+	}
+	p, err := s.m.pg.CodeProjects().Get(projectID)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if p == nil {
+		writeErr(w, 404, "项目不存在")
+		return
+	}
+	run, err := s.m.pg.CodeProjects().GetAudit(runID)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if run == nil || run.ProjectID != projectID {
+		writeErr(w, 404, "增量运行不存在")
+		return
+	}
+	if run.Status != "prepared" {
+		writeErr(w, 409, "增量运行不是 prepared 状态")
+		return
+	}
+	if run.BaseTaskID == nil || *run.BaseTaskID <= 0 {
+		writeErr(w, 409, "增量运行缺少基线任务")
+		return
+	}
+	if len(run.DeltaCellKeys) == 0 {
+		writeErr(w, 409, "该增量运行没有 delta 明细，请重新准备")
+		return
+	}
+	if strings.TrimSpace(run.SourcePath) == "" {
+		writeErr(w, 409, "增量运行缺少源码快照")
+		return
+	}
+	sourceDir := filepath.Join(s.m.dir, filepath.FromSlash(run.SourcePath))
+	if fi, statErr := os.Stat(sourceDir); statErr != nil || !fi.IsDir() {
+		writeErr(w, 409, "增量源码快照不存在，请重新准备")
+		return
+	}
+	matrixPath := filepath.Join(filepath.Dir(sourceDir), "matrix", "import.json")
+	raw, err := os.ReadFile(matrixPath)
+	if err != nil {
+		writeErr(w, 409, "增量矩阵文件不存在，请重新准备")
+		return
+	}
+	var fullBody importCellsBody
+	if err := json.Unmarshal(raw, &fullBody); err != nil {
+		writeErr(w, 500, "解析增量矩阵失败："+err.Error())
+		return
+	}
+	allowed := make(map[string]bool, len(run.DeltaCellKeys))
+	for _, key := range run.DeltaCellKeys {
+		if key = strings.TrimSpace(key); key != "" {
+			allowed[key] = true
+		}
+	}
+	body := fullBody
+	body.Tasks = make([]db.CellInput, 0, len(run.DeltaCellKeys))
+	for _, cell := range fullBody.Tasks {
+		if allowed[cell.CellKey] {
+			body.Tasks = append(body.Tasks, cell)
+		}
+	}
+	if len(body.Tasks) == 0 {
+		writeErr(w, 409, "delta 明细没有匹配到目标矩阵，请重新准备")
+		return
+	}
+	// Reject a second live run for the same project. Prepared runs are inert and
+	// may stay around, but only one task may be executing at a time.
+	if runs, listErr := s.m.pg.CodeProjects().ListAudits(projectID, 10); listErr != nil {
+		writeErr(w, 500, listErr.Error())
+		return
+	} else {
+		for _, other := range runs {
+			if other.ID == run.ID {
+				continue
+			}
+			if other.Status == "fetching" || other.Status == "preparing" || other.Status == "running" {
+				writeErr(w, 409, "该项目已有审计运行正在进行")
+				return
+			}
+		}
+	}
+	me := currentUser(r)
+	if me == nil {
+		writeErr(w, 401, "未授权")
+		return
+	}
+	if ok, permErr := s.canCreateTask(me); permErr != nil {
+		writeErr(w, 500, permErr.Error())
+		return
+	} else if !ok {
+		writeErr(w, 403, "当前账号没有创建任务的权限")
+		return
+	}
+	baseTask, err := s.m.pg.GetTask(*run.BaseTaskID)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if baseTask == nil || strings.TrimSpace(baseTask.SourcePath) == "" {
+		writeErr(w, 409, "基线任务源码不存在，请重新准备")
+		return
+	}
+	var req struct {
+		AutoStart *bool `json:"auto_start"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	autoStart := req.AutoStart == nil || *req.AutoStart
+	desc := fmt.Sprintf("增量审计 GitLab 项目 %s（%s @ %s，base %s）", p.Path, projectBranch(p), shortSHA(run.TargetCommit), shortSHA(run.BaseCommit))
+	goal := "只审计本次增量矩阵格（变更文件影响的接口与漏洞类型）；未变更矩阵格的结论从基线任务只读继承，不重新审计、不发请求、不编译业务源码。"
+	task, err := s.m.CreateTaskWithOptions(desc, goal, db.TaskCreateOptions{
+		Name:          fmt.Sprintf("%s · 增量审计 %s", p.Name, shortSHA(run.TargetCommit)),
+		CreatedBy:     &me.ID,
+		SourceTaskIDs: []int64{*run.BaseTaskID},
+	})
+	if err != nil {
+		writeErr(w, 500, "创建增量任务失败："+err.Error())
+		return
+	}
+	taskID, _ := strconv.ParseInt(task.ID, 10, 64)
+	relSource := filepath.ToSlash(filepath.Join("tasks", task.ID, "source"))
+	taskSource := filepath.Join(s.m.dir, filepath.FromSlash(relSource))
+	cleanup := func(msg string) {
+		_ = os.RemoveAll(taskSource)
+		if _, delErr := s.m.DeleteTask(task.ID, DeleteTaskOptions{DeleteFiles: true}); delErr != nil {
+			log.Printf("[incremental] 清理失败任务 #%s: %v", task.ID, delErr)
+		}
+		_ = s.m.pg.CodeProjects().FinishAudit(run.ID, nil, "failed", msg)
+		log.Printf("[incremental] run=%d 启动失败: %s", run.ID, msg)
+		writeErr(w, 500, msg)
+	}
+	if err := copyDirTree(sourceDir, taskSource); err != nil {
+		cleanup("复制增量源码到任务失败：" + err.Error())
+		return
+	}
+	if err := s.m.pg.SetTaskSourcePath(taskID, relSource); err != nil {
+		cleanup("记录任务源码目录失败：" + err.Error())
+		return
+	}
+	s.m.SetTaskSourcePathInMemory(task.ID, relSource)
+	if _, _, err := s.importMatrixCells(task, body); err != nil {
+		cleanup("导入增量矩阵失败：" + err.Error())
+		return
+	}
+	_ = s.m.SetTaskMatrixState(task.ID, "ready", "")
+	if err := s.m.pg.CodeProjects().FinishAudit(run.ID, &taskID, "running", ""); err != nil {
+		cleanup("更新增量运行状态失败：" + err.Error())
+		return
+	}
+	if autoStart {
+		s.launchTask(task, desc+" "+goal, false)
+	}
+	log.Printf("[incremental] run=%d 启动任务 #%s target=%s delta_cells=%d inherited_source=%d", run.ID, task.ID, shortSHA(run.TargetCommit), len(body.Tasks), *run.BaseTaskID)
+	updated, _ := s.m.pg.CodeProjects().GetAudit(run.ID)
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"audit":   updated,
+		"task_id": taskID,
+	})
 }

@@ -20,6 +20,7 @@ import {
 import { toast } from "sonner";
 
 import { StatusBadge } from "@/components/status-badge";
+import { Badge } from "@/components/ui/badge";
 import { TaskLLMProfileChain } from "@/components/task-llm-profile-chain";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -52,7 +53,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { api } from "@/lib/api";
 import { auth } from "@/lib/auth";
 import { useAuth } from "@/lib/auth-context";
-import type { Department, LLMProfile, Task } from "@/lib/types";
+import type { Department, LLMProfile, Task, TaskProjectAudit } from "@/lib/types";
 
 import { AssetsTab } from "./_tabs/assets-tab";
 import { BroadcastTab } from "./_tabs/broadcast-tab";
@@ -265,6 +266,7 @@ function TaskDetailInner() {
   // 开启失败的原因（409「任务已经在运行中 / 任务已结束 / 任务已暂停」等）内联展示，不弹 toast 砸脸。
   const [startError, setStartError] = React.useState("");
   const [departments, setDepartments] = React.useState<Department[]>([]);
+  const [auditContext, setAuditContext] = React.useState<TaskProjectAudit | null>(null);
   const [deptSaving, setDeptSaving] = React.useState(false);
 
   React.useEffect(() => {
@@ -273,6 +275,21 @@ function TaskDetailInner() {
       .then(setProfiles)
       .catch(() => setProfiles([]));
   }, []);
+
+  React.useEffect(() => {
+    let alive = true;
+    api
+      .taskProjectAudit(id)
+      .then((ctx) => {
+        if (alive) setAuditContext(ctx);
+      })
+      .catch(() => {
+        if (alive) setAuditContext(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [id]);
 
   // 只有管理员能改归属，也只有管理员会拿到部门列表（普通账号请求会被后端 403）。
   React.useEffect(() => {
@@ -601,6 +618,34 @@ function TaskDetailInner() {
             </a>
           ) : null}
         </div>
+        {auditContext?.audit.mode === "incremental" && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-sky-500/30 bg-sky-500/5 px-2 py-1.5 text-xs">
+            <Badge variant="outline" className="border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300">
+              增量审计
+            </Badge>
+            <Link
+              href={`/function/projects/detail?id=${auditContext.project.id}`}
+              className="text-foreground underline underline-offset-2"
+            >
+              {auditContext.project.name}
+            </Link>
+            <span className="text-muted-foreground font-mono">
+              {auditContext.audit.base_commit.slice(0, 12)} → {auditContext.audit.target_commit.slice(0, 12)}
+            </span>
+            <span className="text-muted-foreground">本次 {auditContext.audit.delta_cells} 个矩阵格</span>
+            {auditContext.audit.base_task_id && (
+              <span className="text-muted-foreground">
+                未变更格继承自{" "}
+                <Link
+                  href={`/function/tasks/detail?id=${auditContext.audit.base_task_id}`}
+                  className="text-foreground underline underline-offset-2"
+                >
+                  #{auditContext.audit.base_task_id}
+                </Link>
+              </span>
+            )}
+          </div>
+        )}
         {startError && (
           <p role="alert" className="truncate text-xs text-destructive" title={startError}>
             {startError}

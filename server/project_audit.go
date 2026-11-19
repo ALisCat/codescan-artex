@@ -290,3 +290,28 @@ func (s *Server) getProjectAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, run)
 }
+
+// GET /api/tasks/{id}/project-audit returns the project run that created this
+// task, if any. The task detail page uses it for the incremental context banner.
+func (s *Server) getTaskProjectAudit(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeErr(w, 400, "任务 ID 不合法")
+		return
+	}
+	run, err := s.m.pg.CodeProjects().GetAuditByTaskID(id)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if run == nil {
+		writeErr(w, 404, "该任务不是项目审计任务")
+		return
+	}
+	p, err := s.m.pg.CodeProjects().Get(run.ProjectID)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"audit": run, "project": p})
+}

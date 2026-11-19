@@ -137,6 +137,7 @@ function DetailInner() {
   const [checking, setChecking] = React.useState(false);
   const [starting, setStarting] = React.useState(false);
   const [preparingIncremental, setPreparingIncremental] = React.useState(false);
+  const [startingIncremental, setStartingIncremental] = React.useState(false);
   const [detailsOpen, setDetailsOpen] = React.useState(false);
   const [incrementalTab, setIncrementalTab] = React.useState<"unreviewed" | "reviewed">("unreviewed");
   const [reviewDialogOpen, setReviewDialogOpen] = React.useState(false);
@@ -300,6 +301,21 @@ function DetailInner() {
     }
   }
 
+  async function startIncremental() {
+    if (!p || !preparedRun) return;
+    setStartingIncremental(true);
+    try {
+      const res = await api.startIncrementalAudit(p.id, preparedRun.id);
+      setAudits((prev) => [res.audit, ...prev.filter((r) => r.id !== res.audit.id)]);
+      toast.success("增量审计任务已创建");
+      router.push(`/function/tasks/detail?id=${res.task_id}`);
+    } catch (e) {
+      toast.error("启动增量审计失败：" + (e as Error).message);
+    } finally {
+      setStartingIncremental(false);
+    }
+  }
+
   async function check() {
     if (!p) return;
     setChecking(true);
@@ -367,6 +383,7 @@ function DetailInner() {
   const activeWarnings = activeScope?.warnings ?? [];
   const activeBase = activeScope?.base_commit || (incrementalTab === "unreviewed" ? preview?.review_base_commit : preview?.base_commit);
   const activeTarget = activeScope?.target_commit || preview?.target_commit;
+  const preparedRun = audits.find((r) => r.status === "prepared") ?? null;
   const incrementalState = !p.last_audited_commit
     ? { label: "需要全量基线", tone: "warning" }
     : previewLoading
@@ -583,6 +600,48 @@ function DetailInner() {
           {previewError && (
             <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-700 dark:text-red-300">
               {previewError}
+            </div>
+          )}
+
+          {preparedRun && (
+            <div className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                    增量审计已准备
+                    <Badge variant="outline" className="border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300">
+                      run #{preparedRun.id}
+                    </Badge>
+                  </div>
+                  <div className="text-muted-foreground font-mono text-xs">
+                    {shortCommit(preparedRun.base_commit)} → {shortCommit(preparedRun.target_commit)}
+                  </div>
+                  <div className="text-muted-foreground text-xs">
+                    {preparedRun.changed_files} 个变更文件 · 本次只审计 {preparedRun.delta_cells} 个矩阵格；未变更格从基线任务只读继承。
+                  </div>
+                  {preparedRun.base_task_id && (
+                    <div className="text-muted-foreground text-xs">
+                      基线任务{" "}
+                      <Link href={`/function/tasks/detail?id=${preparedRun.base_task_id}`} className="text-foreground underline underline-offset-2">
+                        #{preparedRun.base_task_id}
+                      </Link>
+                    </div>
+                  )}
+                  {preparedRun.target_commit !== p.last_seen_commit && (
+                    <div className="text-xs text-amber-700 dark:text-amber-300">
+                      该准备固定到旧 target；当前 HEAD 已更新，新提交会留给下一次增量。
+                    </div>
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  onClick={startIncremental}
+                  disabled={startingIncremental || preparedRun.delta_cells <= 0}
+                >
+                  {startingIncremental ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}
+                  {preparedRun.delta_cells > 0 ? "开始增量审计" : "没有 delta 格"}
+                </Button>
+              </div>
             </div>
           )}
 

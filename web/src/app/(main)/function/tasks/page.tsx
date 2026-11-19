@@ -1305,6 +1305,11 @@ const TaskRow = React.memo(function TaskRow({
       <TableCell className="font-medium">
         <div className="flex max-w-xs items-center gap-2">
           <TaskNameEditor task={task} onRename={onRename} readOnly={readOnly} />
+          {task.name?.includes("增量审计") && (
+            <Badge variant="outline" className="shrink-0 border-sky-500/30 font-normal text-sky-700 dark:text-sky-300">
+              增量
+            </Badge>
+          )}
           {task.active && <StarIcon className="size-4 shrink-0 fill-amber-400 text-amber-400" />}
           {taskIsPinned(task) && <PinIcon className="text-primary size-4 shrink-0" aria-label="已置顶" />}
           {/* 归属部门：只在后端给出部门名时展示，窄徽标不挤压名称列。 */}

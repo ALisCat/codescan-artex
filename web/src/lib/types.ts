@@ -1174,6 +1174,11 @@ export interface ChangePreview {
   error?: string;
 }
 
+export interface TaskProjectAudit {
+  audit: ProjectAuditRun;
+  project: CodeProject;
+}
+
 export interface ProjectAuditRun {
   id: number;
   project_id: number;
@@ -1185,6 +1190,7 @@ export interface ProjectAuditRun {
   source_path?: string;
   changed_files: number;
   delta_cells: number;
+  delta_cell_keys: string[];
   prepared_at?: string;
   status: "fetching" | "preparing" | "prepared" | "ready" | "audited" | "failed" | string;
   error_message: string;

@@ -81,6 +81,7 @@ import type {
   GitLabTestResult,
   ChangePreview,
   ProjectAuditRun,
+  TaskProjectAudit,
   Severity,
   SkillCall,
   SkillItem,
@@ -1145,9 +1146,12 @@ export const api = {
   startProjectAudit: (id: number, mode: "full" | "incremental" = "full") =>
     post<{ audit: ProjectAuditRun; upload_id: string; state: string }>(`/projects/${id}/audit`, { mode }),
   prepareIncrementalAudit: (id: number) => post<ProjectAuditRun>(`/projects/${id}/incremental-prepare`),
+  startIncrementalAudit: (id: number, runID: number) =>
+    post<{ audit: ProjectAuditRun; task_id: number }>(`/projects/${id}/incremental-runs/${runID}/start`),
   projectAudits: (id: number) =>
     get<{ audits: ProjectAuditRun[] | null }>(`/projects/${id}/audits`).then((r) => arr(r.audits)),
   projectAudit: (id: number, runID: number) => get<ProjectAuditRun>(`/projects/${id}/audits/${runID}`),
+  taskProjectAudit: (id: string) => get<TaskProjectAudit>(`/tasks/${id}/project-audit`),
   projectChangePreview: (id: number) => get<ChangePreview>(`/projects/${id}/change-preview`),
   reviewProject: (id: number, commit: string, note: string) =>
     post<CodeProject>(`/projects/${id}/review`, { commit, note }),
