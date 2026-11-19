@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api } from "@/lib/api";
 import type { ChangeFile, ChangePreview, CodeProject, ProjectAuditRun } from "@/lib/types";
 
@@ -706,10 +707,23 @@ function DetailInner() {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button size="sm" onClick={prepareIncremental} disabled={preparingIncremental || !!latestPrepared}>
-                    {preparingIncremental ? <Loader2Icon className="size-4 animate-spin" /> : <ShieldCheckIcon className="size-4" />}
-                    {latestPrepared ? "增量已准备" : "准备增量审计"}
-                  </Button>
+                  <Tooltip delayDuration={150}>
+                    <TooltipTrigger asChild>
+                      <Button size="sm" onClick={prepareIncremental} disabled={preparingIncremental || !!latestPrepared}>
+                        {preparingIncremental ? <Loader2Icon className="size-4 animate-spin" /> : <ShieldCheckIcon className="size-4" />}
+                        {latestPrepared ? "增量已准备" : "准备增量审计"}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-sm">
+                      <div className="space-y-1">
+                        <div className="font-medium">会审计全部未审计提交</div>
+                        <div>
+                          本次从审计基线审计到目标 HEAD，包含已阅未审计 {reviewedCount} 个提交、未阅 {unreadCount} 个提交。
+                        </div>
+                        <div>审计基线必须连续推进，不能跳过中间未审计的提交。</div>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
                   {incrementalTab === "unreviewed" && unreadCount > 0 && (
                     <Button
                       size="sm"
