@@ -24,13 +24,39 @@ type incrementalDelta struct {
 	ChangedPaths []string
 }
 
-func (s *Server) findBaseAuditTask(projectID int64, baseCommit string) (*db.Task, error) {
-	runs, err := s.m.pg.CodeProjects().ListAudits(projectID, 100)
-	if err != nil {
-		return nil, err
+func (s *Server) findBaseAuditTask(p *db.CodeProject) (*db.Task, *db.ProjectAuditRun, error) {
+	if p == nil {
+		return nil, nil, nil
 	}
-	for _, r := range runs {
-		if r.TaskID == nil || r.TargetCommit != baseCommit {
+	// Prefer the explicit pointer written by the reconciler after the previous
+	// audit completed. This is what makes the chain
+	// full -> incremental -> next incremental deterministic.
+	if p.LastAuditedTaskID != nil && *p.LastAuditedTaskID > 0 {
+		t, err := s.m.pg.GetTask(*p.LastAuditedTaskID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if t != nil && strings.TrimSpace(t.SourcePath) != "" {
+			var baseRun *db.ProjectAuditRun
+			if p.LastAuditedRunID != nil && *p.LastAuditedRunID > 0 {
+				baseRun, err = s.m.pg.CodeProjects().GetAudit(*p.LastAuditedRunID)
+				if err != nil {
+					return nil, nil, err
+				}
+			}
+			if baseRun == nil || (baseRun.ProjectID == p.ID && baseRun.TargetCommit == p.LastAuditedCommit) {
+				return t, baseRun, nil
+			}
+		}
+	}
+	// Legacy fallback for projects created before last_audited_task_id existed.
+	runs, err := s.m.pg.CodeProjects().ListAudits(p.ID, 100)
+	if err != nil {
+		return nil, nil, err
+	}
+	for i := range runs {
+		r := &runs[i]
+		if r.TaskID == nil || r.TargetCommit != p.LastAuditedCommit {
 			continue
 		}
 		if r.Status != "audited" && r.Status != "ready" {
@@ -38,13 +64,13 @@ func (s *Server) findBaseAuditTask(projectID int64, baseCommit string) (*db.Task
 		}
 		t, err := s.m.pg.GetTask(*r.TaskID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if t != nil && strings.TrimSpace(t.SourcePath) != "" {
-			return t, nil
+			return t, r, nil
 		}
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 // POST /api/projects/{id}/incremental-prepare
@@ -89,7 +115,7 @@ func (s *Server) prepareIncrementalAudit(w http.ResponseWriter, r *http.Request)
 		writeErr(w, 409, "目标分支没有新提交，无需增量准备")
 		return
 	}
-	baseTask, err := s.findBaseAuditTask(id, base)
+	baseTask, baseRun, err := s.findBaseAuditTask(p)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -97,6 +123,11 @@ func (s *Server) prepareIncrementalAudit(w http.ResponseWriter, r *http.Request)
 	if baseTask == nil {
 		writeErr(w, 409, "找不到基线 commit 对应的源码快照，请重新执行全量审计")
 		return
+	}
+	var baseRunID *int64
+	if baseRun != nil {
+		id := baseRun.ID
+		baseRunID = &id
 	}
 	// One in-flight preparation per project.
 	if latest, err := s.m.pg.CodeProjects().ListAudits(id, 1); err != nil {
@@ -112,7 +143,7 @@ func (s *Server) prepareIncrementalAudit(w http.ResponseWriter, r *http.Request)
 		createdBy = &u.ID
 	}
 	baseTaskID := baseTask.ID
-	run, err := s.m.pg.CodeProjects().StartIncrementalAudit(id, baseTaskID, base, target, createdBy)
+	run, err := s.m.pg.CodeProjects().StartIncrementalAudit(id, baseTaskID, baseRunID, base, target, createdBy)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -347,6 +378,10 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 	}
 	if run.Status != "prepared" {
 		writeErr(w, 409, "增量运行不是 prepared 状态")
+		return
+	}
+	if strings.TrimSpace(p.LastAuditedCommit) != strings.TrimSpace(run.BaseCommit) {
+		writeErr(w, 409, "项目审计基线已变化，请重新准备本次增量")
 		return
 	}
 	if run.BaseTaskID == nil || *run.BaseTaskID <= 0 {

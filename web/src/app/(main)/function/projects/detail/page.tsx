@@ -509,6 +509,17 @@ function DetailInner() {
                 <div className="text-muted-foreground mt-1 text-xs">
                   {hasAudit ? "增量审计将以此为基线" : "还没有成功审计基线"}
                 </div>
+                {p.last_audited_task_id && (
+                  <div className="text-muted-foreground mt-1 text-xs">
+                    基线任务{" "}
+                    <Link
+                      href={`/function/tasks/detail?id=${p.last_audited_task_id}`}
+                      className="text-foreground underline underline-offset-2"
+                    >
+                      #{p.last_audited_task_id}
+                    </Link>
+                  </div>
+                )}
               </div>
             </div>
 

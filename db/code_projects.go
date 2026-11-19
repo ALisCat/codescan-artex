@@ -16,6 +16,8 @@ type CodeProject struct {
 	TrackedBranch      string     `json:"tracked_branch"`
 	LastSeenCommit     string     `json:"last_seen_commit"`
 	LastAuditedCommit  string     `json:"last_audited_commit"`
+	LastAuditedTaskID  *int64     `json:"last_audited_task_id,omitempty"`
+	LastAuditedRunID   *int64     `json:"last_audited_run_id,omitempty"`
 	LastReviewedCommit string     `json:"last_reviewed_commit"`
 	LastReviewedAt     *time.Time `json:"last_reviewed_at,omitempty"`
 	LastReviewedBy     *int64     `json:"last_reviewed_by,omitempty"`
@@ -33,7 +35,7 @@ type CodeProjectStore struct{ db *DB }
 func (d *DB) CodeProjects() *CodeProjectStore { return &CodeProjectStore{db: d} }
 
 const codeProjectCols = `id,name,path,gitlab_project_id,web_url,default_branch,tracked_branch,
-last_seen_commit,last_audited_commit,last_reviewed_commit,last_reviewed_at,last_reviewed_by,last_review_note,
+last_seen_commit,last_audited_commit,last_audited_task_id,last_audited_run_id,last_reviewed_commit,last_reviewed_at,last_reviewed_by,last_review_note,
 last_checked_at,last_check_error,status,created_by,created_at,updated_at`
 
 func scanCodeProject(sc interface{ Scan(...any) error }) (*CodeProject, error) {
@@ -42,11 +44,19 @@ func scanCodeProject(sc interface{ Scan(...any) error }) (*CodeProject, error) {
 	var createdBy sql.NullInt64
 	var reviewedAt sql.NullTime
 	var reviewedBy sql.NullInt64
+	var auditedTaskID sql.NullInt64
+	var auditedRunID sql.NullInt64
 	if err := sc.Scan(&p.ID, &p.Name, &p.Path, &p.GitLabProjectID, &p.WebURL, &p.DefaultBranch, &p.TrackedBranch,
-		&p.LastSeenCommit, &p.LastAuditedCommit, &p.LastReviewedCommit, &reviewedAt, &reviewedBy, &p.LastReviewNote,
+		&p.LastSeenCommit, &p.LastAuditedCommit, &auditedTaskID, &auditedRunID, &p.LastReviewedCommit, &reviewedAt, &reviewedBy, &p.LastReviewNote,
 		&checked, &p.LastCheckError, &p.Status,
 		&createdBy, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, err
+	}
+	if auditedTaskID.Valid {
+		p.LastAuditedTaskID = &auditedTaskID.Int64
+	}
+	if auditedRunID.Valid {
+		p.LastAuditedRunID = &auditedRunID.Int64
 	}
 	if reviewedAt.Valid {
 		p.LastReviewedAt = &reviewedAt.Time
@@ -161,12 +171,13 @@ UPDATE code_projects SET last_reviewed_commit=$2, last_reviewed_at=now(), last_r
 
 // MarkAuditedAndReviewed is called after an audit task reaches done: the target
 // commit is both audited and reviewed.
-func (s *CodeProjectStore) MarkAuditedAndReviewed(id int64, commit string) error {
+func (s *CodeProjectStore) MarkAuditedAndReviewed(id int64, commit string, taskID, runID int64) error {
 	_, err := s.db.Exec(`
 UPDATE code_projects SET last_audited_commit=$2,
+    last_audited_task_id=$3, last_audited_run_id=$4,
     last_seen_commit=COALESCE(NULLIF($2,''), last_seen_commit),
     last_reviewed_commit=$2, last_reviewed_at=now(), last_reviewed_by=NULL,
-    last_review_note='审计完成', updated_at=now() WHERE id=$1`, id, commit)
+    last_review_note='审计完成', updated_at=now() WHERE id=$1`, id, commit, taskID, runID)
 	return err
 }
 

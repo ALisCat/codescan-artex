@@ -51,7 +51,8 @@ func (s *Server) reconcileProjectAudits() {
 		}
 		switch t.Status {
 		case "done":
-			if err := s.m.pg.CodeProjects().MarkAuditedAndReviewed(run.ProjectID, run.TargetCommit); err != nil {
+			taskID := *run.TaskID
+			if err := s.m.pg.CodeProjects().MarkAuditedAndReviewed(run.ProjectID, run.TargetCommit, taskID, run.ID); err != nil {
 				log.Printf("[project] 审计运行 %d 回写基线失败: %v", run.ID, err)
 				continue
 			}

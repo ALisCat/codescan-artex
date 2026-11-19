@@ -1614,6 +1614,8 @@ CREATE TABLE IF NOT EXISTS code_projects (
     tracked_branch      TEXT NOT NULL DEFAULT '',
     last_seen_commit    TEXT NOT NULL DEFAULT '',
     last_audited_commit TEXT NOT NULL DEFAULT '',
+    last_audited_task_id BIGINT,
+    last_audited_run_id BIGINT,
     last_reviewed_commit TEXT NOT NULL DEFAULT '',
     last_reviewed_at    TIMESTAMPTZ,
     last_reviewed_by    BIGINT,
@@ -1631,6 +1633,8 @@ CREATE INDEX IF NOT EXISTS idx_code_projects_updated ON code_projects(updated_at
 -- 旧表只有 path UNIQUE，升级时必须先去掉，否则第二个分支插不进去。
 ALTER TABLE code_projects DROP CONSTRAINT IF EXISTS code_projects_path_key;
 ALTER TABLE code_projects ADD COLUMN IF NOT EXISTS tracked_branch TEXT NOT NULL DEFAULT '';
+ALTER TABLE code_projects ADD COLUMN IF NOT EXISTS last_audited_task_id BIGINT;
+ALTER TABLE code_projects ADD COLUMN IF NOT EXISTS last_audited_run_id BIGINT;
 ALTER TABLE code_projects ADD COLUMN IF NOT EXISTS last_reviewed_commit TEXT NOT NULL DEFAULT '';
 ALTER TABLE code_projects ADD COLUMN IF NOT EXISTS last_reviewed_at TIMESTAMPTZ;
 ALTER TABLE code_projects ADD COLUMN IF NOT EXISTS last_reviewed_by BIGINT;
@@ -1647,6 +1651,7 @@ CREATE TABLE IF NOT EXISTS project_audit_runs (
     base_commit     TEXT NOT NULL DEFAULT '',
     target_commit   TEXT NOT NULL DEFAULT '',
     base_task_id    BIGINT,
+    base_run_id     BIGINT,
     task_id         BIGINT,
     source_path     TEXT NOT NULL DEFAULT '',
     changed_files   INTEGER NOT NULL DEFAULT 0,
@@ -1660,6 +1665,7 @@ CREATE TABLE IF NOT EXISTS project_audit_runs (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE project_audit_runs ADD COLUMN IF NOT EXISTS base_task_id BIGINT;
+ALTER TABLE project_audit_runs ADD COLUMN IF NOT EXISTS base_run_id BIGINT;
 ALTER TABLE project_audit_runs ADD COLUMN IF NOT EXISTS source_path TEXT NOT NULL DEFAULT '';
 ALTER TABLE project_audit_runs ADD COLUMN IF NOT EXISTS changed_files INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE project_audit_runs ADD COLUMN IF NOT EXISTS delta_cells INTEGER NOT NULL DEFAULT 0;

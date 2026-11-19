@@ -1078,6 +1078,8 @@ export interface CodeProject {
   tracked_branch: string;
   last_seen_commit: string;
   last_audited_commit: string;
+  last_audited_task_id?: number;
+  last_audited_run_id?: number;
   last_reviewed_commit: string;
   last_reviewed_at?: string;
   last_reviewed_by?: number | null;
@@ -1186,6 +1188,7 @@ export interface ProjectAuditRun {
   base_commit: string;
   target_commit: string;
   base_task_id?: number | null;
+  base_run_id?: number | null;
   task_id?: number | null;
   source_path?: string;
   changed_files: number;
