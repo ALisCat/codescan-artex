@@ -383,7 +383,7 @@ function DetailInner() {
   const activeWarnings = activeScope?.warnings ?? [];
   const activeBase = activeScope?.base_commit || (incrementalTab === "unreviewed" ? preview?.review_base_commit : preview?.base_commit);
   const activeTarget = activeScope?.target_commit || preview?.target_commit;
-  const preparedRun = audits.find((r) => r.status === "prepared") ?? null;
+  const preparedRun = audits[0]?.status === "prepared" ? audits[0] : null;
   const incrementalState = !p.last_audited_commit
     ? { label: "需要全量基线", tone: "warning" }
     : previewLoading
