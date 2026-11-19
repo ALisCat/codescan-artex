@@ -95,40 +95,32 @@ func (s *Server) runMatrixCommand(ctx context.Context, dir, python string, args 
 	return nil
 }
 
-// prepareTaskMatrix runs graph → analyzers → binder → import and seeds ca_cells.
-// It is intentionally called only after the source tree has been attached and
-// before the task is launched.
-func (s *Server) prepareTaskMatrix(ctx context.Context, t *Task, requireCells bool) (int, int, error) {
-	if t == nil || strings.TrimSpace(t.SourcePath) == "" {
-		return 0, 0, fmt.Errorf("任务没有源码目录")
-	}
+// buildMatrixImport runs the Python matrix pipeline and returns the platform
+// import body. It does not touch tasks or ca_cells; callers decide whether to
+// import (task audit) or only inspect delta cells (incremental preparation).
+func (s *Server) buildMatrixImport(ctx context.Context, sourceDir, outDir string) (importCellsBody, error) {
+	var body importCellsBody
 	codeauditDir, err := s.codeauditDir()
 	if err != nil {
-		return 0, 0, err
+		return body, err
 	}
 	python := s.matrixPython()
 	if python == "" {
-		return 0, 0, fmt.Errorf("找不到 python3，无法运行矩阵分析器")
+		return body, fmt.Errorf("找不到 python3，无法运行矩阵分析器")
 	}
-	sourceDir := filepath.Join(s.m.dir, filepath.FromSlash(t.SourcePath))
 	if fi, err := os.Stat(sourceDir); err != nil || !fi.IsDir() {
-		return 0, 0, fmt.Errorf("任务源码目录不存在: %s", sourceDir)
+		return body, fmt.Errorf("源码目录不存在: %s", sourceDir)
 	}
-	if err := normalizeSingleSourceRoot(sourceDir); err != nil {
-		return 0, 0, fmt.Errorf("归一化源码目录失败: %w", err)
-	}
-	outDir := filepath.Join(s.m.dir, "tasks", t.ID, "matrix")
 	if err := os.RemoveAll(outDir); err != nil {
-		return 0, 0, fmt.Errorf("清理旧矩阵目录失败: %w", err)
+		return body, fmt.Errorf("清理旧矩阵目录失败: %w", err)
 	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return 0, 0, fmt.Errorf("创建矩阵目录失败: %w", err)
+		return body, fmt.Errorf("创建矩阵目录失败: %w", err)
 	}
 	graph := filepath.Join(outDir, "graph.json")
 	findings := filepath.Join(outDir, "findings.json")
 	bound := filepath.Join(outDir, "bound")
 	importPath := filepath.Join(outDir, "import.json")
-
 	steps := [][]string{
 		{"matrix.graph.build", sourceDir, graph},
 		{"matrix.run", graph, "--analyzers", matrixAnalyzerList, "--out", findings},
@@ -138,16 +130,37 @@ func (s *Server) prepareTaskMatrix(ctx context.Context, t *Task, requireCells bo
 	for _, step := range steps {
 		args := append([]string{"-m"}, step...)
 		if err := s.runMatrixCommand(ctx, codeauditDir, python, args...); err != nil {
-			return 0, 0, err
+			return body, err
 		}
 	}
 	raw, err := os.ReadFile(importPath)
 	if err != nil {
-		return 0, 0, fmt.Errorf("读取矩阵导入体失败: %w", err)
+		return body, fmt.Errorf("读取矩阵导入体失败: %w", err)
 	}
-	var body importCellsBody
 	if err := json.Unmarshal(raw, &body); err != nil {
-		return 0, 0, fmt.Errorf("解析矩阵导入体失败: %w", err)
+		return body, fmt.Errorf("解析矩阵导入体失败: %w", err)
+	}
+	return body, nil
+}
+
+// prepareTaskMatrix runs graph → analyzers → binder → import and seeds ca_cells.
+// It is intentionally called only after the source tree has been attached and
+// before the task is launched.
+func (s *Server) prepareTaskMatrix(ctx context.Context, t *Task, requireCells bool) (int, int, error) {
+	if t == nil || strings.TrimSpace(t.SourcePath) == "" {
+		return 0, 0, fmt.Errorf("任务没有源码目录")
+	}
+	sourceDir := filepath.Join(s.m.dir, filepath.FromSlash(t.SourcePath))
+	if fi, err := os.Stat(sourceDir); err != nil || !fi.IsDir() {
+		return 0, 0, fmt.Errorf("任务源码目录不存在: %s", sourceDir)
+	}
+	if err := normalizeSingleSourceRoot(sourceDir); err != nil {
+		return 0, 0, fmt.Errorf("归一化源码目录失败: %w", err)
+	}
+	outDir := filepath.Join(s.m.dir, "tasks", t.ID, "matrix")
+	body, err := s.buildMatrixImport(ctx, sourceDir, outDir)
+	if err != nil {
+		return 0, 0, err
 	}
 	if len(body.Tasks) == 0 && !requireCells {
 		log.Printf("[matrix] task %s 没有可派发矩阵格，保留标准任务路径", t.ID)

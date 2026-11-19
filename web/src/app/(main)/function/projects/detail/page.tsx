@@ -125,6 +125,7 @@ function DetailInner() {
   const [loading, setLoading] = React.useState(true);
   const [checking, setChecking] = React.useState(false);
   const [starting, setStarting] = React.useState(false);
+  const [preparingIncremental, setPreparingIncremental] = React.useState(false);
   const [preview, setPreview] = React.useState<ChangePreview | null>(null);
   const [previewLoading, setPreviewLoading] = React.useState(false);
   const [previewError, setPreviewError] = React.useState("");
@@ -229,6 +230,47 @@ function DetailInner() {
       toast.error("标记已阅失败：" + (e as Error).message);
     } finally {
       setReviewing(false);
+    }
+  }
+
+  async function prepareIncremental() {
+    if (!p) return;
+    setPreparingIncremental(true);
+    try {
+      const run = await api.prepareIncrementalAudit(p.id);
+      setAudits((prev) => [run, ...prev.filter((r) => r.id !== run.id)]);
+      toast.success("已开始准备增量源码和矩阵…");
+      const runID = run.id;
+      const deadline = Date.now() + 20 * 60 * 1000;
+      const tick = async () => {
+        try {
+          const next = await api.projectAudit(p.id, runID);
+          setAudits((prev) => [next, ...prev.filter((r) => r.id !== next.id)]);
+          if (next.status === "prepared") {
+            if (pollRef.current) window.clearInterval(pollRef.current);
+            pollRef.current = null;
+            toast.success(`增量准备完成：${next.changed_files} 个文件，${next.delta_cells} 个 delta 格`);
+            load();
+          } else if (next.status === "failed") {
+            if (pollRef.current) window.clearInterval(pollRef.current);
+            pollRef.current = null;
+            toast.error("增量准备失败：" + (next.error_message || "未知错误"));
+            load();
+          } else if (Date.now() > deadline) {
+            if (pollRef.current) window.clearInterval(pollRef.current);
+            pollRef.current = null;
+            toast.error("增量准备超时，请刷新项目查看结果");
+          }
+        } catch {
+          // transient poll error: next tick retries
+        }
+      };
+      if (pollRef.current) window.clearInterval(pollRef.current);
+      pollRef.current = window.setInterval(() => void tick(), 2000);
+    } catch (e) {
+      toast.error("启动增量准备失败：" + (e as Error).message);
+    } finally {
+      setPreparingIncremental(false);
     }
   }
 
@@ -419,10 +461,20 @@ function DetailInner() {
             <Button
               className="w-full justify-start"
               variant="outline"
-              disabled
-              title={!hasAudit ? "先完成一次全量审计" : "增量审计将在下一阶段接入"}
+              onClick={prepareIncremental}
+              disabled={!hasAudit || !updateAvailable || preparingIncremental}
+              title={!hasAudit ? "先完成一次全量审计" : !updateAvailable ? "目标分支没有新提交" : "准备增量源码和 target 矩阵（不会创建任务）"}
             >
-              <HistoryIcon className="size-4" />
+              {preparingIncremental ? <Loader2Icon className="size-4 animate-spin" /> : <HistoryIcon className="size-4" />}
+              准备增量源码
+            </Button>
+            <Button
+              className="w-full justify-start"
+              variant="outline"
+              disabled
+              title="下一步：delta cells 派发与 base findings 继承"
+            >
+              <PlayIcon className="size-4" />
               发起增量审计
             </Button>
             {latestAudit && (
@@ -432,6 +484,11 @@ function DetailInner() {
                   <Badge variant="outline">{latestAudit.status}</Badge>
                 </div>
                 <div className="mt-1 font-mono">target {shortCommit(latestAudit.target_commit)}</div>
+                {latestAudit.status === "prepared" && (
+                  <div className="mt-1">
+                    变更文件 {latestAudit.changed_files} · delta 格 {latestAudit.delta_cells}
+                  </div>
+                )}
                 {latestAudit.error_message && (
                   <div className="mt-1 text-red-600 dark:text-red-400">{latestAudit.error_message}</div>
                 )}

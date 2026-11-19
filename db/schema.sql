@@ -1646,11 +1646,21 @@ CREATE TABLE IF NOT EXISTS project_audit_runs (
     mode            TEXT NOT NULL DEFAULT 'full',
     base_commit     TEXT NOT NULL DEFAULT '',
     target_commit   TEXT NOT NULL DEFAULT '',
+    base_task_id    BIGINT,
     task_id         BIGINT,
+    source_path     TEXT NOT NULL DEFAULT '',
+    changed_files   INTEGER NOT NULL DEFAULT 0,
+    delta_cells     INTEGER NOT NULL DEFAULT 0,
+    prepared_at     TIMESTAMPTZ,
     status          TEXT NOT NULL DEFAULT 'fetching',
     error_message   TEXT NOT NULL DEFAULT '',
     created_by      BIGINT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE project_audit_runs ADD COLUMN IF NOT EXISTS base_task_id BIGINT;
+ALTER TABLE project_audit_runs ADD COLUMN IF NOT EXISTS source_path TEXT NOT NULL DEFAULT '';
+ALTER TABLE project_audit_runs ADD COLUMN IF NOT EXISTS changed_files INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE project_audit_runs ADD COLUMN IF NOT EXISTS delta_cells INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE project_audit_runs ADD COLUMN IF NOT EXISTS prepared_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_project_audit_runs_project ON project_audit_runs(project_id, id DESC);

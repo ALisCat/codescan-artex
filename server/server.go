@@ -889,6 +889,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/projects/{id}/check", s.requireAdmin(s.checkProject))
 	mux.HandleFunc("DELETE /api/projects/{id}", s.requireAdmin(s.deleteProject))
 	mux.HandleFunc("POST /api/projects/{id}/audit", s.requireAdmin(s.startProjectAudit))
+	mux.HandleFunc("POST /api/projects/{id}/incremental-prepare", s.requireAdmin(s.prepareIncrementalAudit))
 	mux.HandleFunc("GET /api/projects/{id}/change-preview", s.requireAdmin(s.projectChangePreview))
 	mux.HandleFunc("POST /api/projects/{id}/review", s.requireAdmin(s.reviewProject))
 	mux.HandleFunc("GET /api/projects/{id}/audits", s.listProjectAudits)

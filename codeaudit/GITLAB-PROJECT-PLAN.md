@@ -1,7 +1,7 @@
 # CodeScan GitLab 项目模块开发计划
 
 > 更新时间：2026-11-17  
-> 状态：阶段 1、分支选择、阶段 2 全量审计、阶段 2.5 增量预览、阶段 2.7 已阅基线与审计缺口已落地；真正的增量审计待接入。
+> 状态：阶段 1、分支选择、阶段 2 全量审计、阶段 2.5 增量预览、阶段 2.7 已阅基线与审计缺口、增量源码准备 dry-run 已落地；真正的增量任务派发待接入。
 
 ## 1. 目标
 
@@ -149,6 +149,54 @@ base_commit（上次审计/上次已阅） → target_commit（当前 HEAD）
 - 中间提交引入又回滚、最终 diff 为空时，预览显示提交列表但文件变更为空；审计以最终源码为准；
 - 需要逐提交查看时作为后续增强，不阻塞第一版。
 
+### 2.8 增量源码准备 dry-run（已实现）
+
+接口：
+
+```text
+POST /api/projects/{id}/incremental-prepare
+```
+
+流程：
+
+```text
+last_audited_commit
+→ 找到对应的 base task/source
+→ copy base source
+→ GitLab compare
+→ changed files raw overlay
+→ 生成 target 矩阵
+→ 统计 changed_files / delta_cells
+→ 只保存 prepared run，不创建任务、不启动 worker
+```
+
+`project_audit_runs` 新增：
+
+- `base_task_id`、`source_path`；
+- `changed_files`、`delta_cells`、`prepared_at`；
+- status：`preparing` / `prepared` / `failed`。
+
+约束：
+
+- base 源码不存在或 base 不是可用审计任务时拒绝；
+- compare 超时拒绝；
+- target 源码路径保存在 run 中，下一步可复用；
+- 不创建 task，不触发 LLM。
+
+当前测试：
+
+```text
+base task: #24
+base: 69e4a1e9
+target: 7fb5c285
+changed_files: 1
+delta_cells: 0
+status: prepared
+```
+
+delta 为 0 是因为新增测试接口 `/api/preview/ping` 在分析器中没有适用的 sink 特征；target 矩阵已成功生成。
+
+## 3. 待开发
 ## 3. 待开发
 ## 3. 待开发
 ## 3. 待开发

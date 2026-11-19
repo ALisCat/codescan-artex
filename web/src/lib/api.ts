@@ -1144,6 +1144,7 @@ export const api = {
   deleteProject: (id: number) => del<{ ok: boolean }>(`/projects/${id}`),
   startProjectAudit: (id: number, mode: "full" | "incremental" = "full") =>
     post<{ audit: ProjectAuditRun; upload_id: string; state: string }>(`/projects/${id}/audit`, { mode }),
+  prepareIncrementalAudit: (id: number) => post<ProjectAuditRun>(`/projects/${id}/incremental-prepare`),
   projectAudits: (id: number) =>
     get<{ audits: ProjectAuditRun[] | null }>(`/projects/${id}/audits`).then((r) => arr(r.audits)),
   projectAudit: (id: number, runID: number) => get<ProjectAuditRun>(`/projects/${id}/audits/${runID}`),

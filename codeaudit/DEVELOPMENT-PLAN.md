@@ -86,6 +86,19 @@
 
 ---
 
+## P1-0 增量源码准备 dry-run
+
+**状态：** 已实现
+
+- 从 last_audited_commit 对应的 base task source 复制源码；
+- compare + changed files raw overlay；
+- 生成 target 矩阵；
+- 保存 `changed_files` / `delta_cells`；
+- 不创建任务、不启动 worker；
+- 真实测试：base 69e4a1e9 → target 7fb5c285，1 个变更文件，target 矩阵生成成功。
+
+---
+
 # P0 · 结果可信度收口
 
 ## P0-1 任务 18 finding 复核

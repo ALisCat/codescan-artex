@@ -6,31 +6,45 @@ import (
 )
 
 type ProjectAuditRun struct {
-	ID           int64     `json:"id"`
-	ProjectID    int64     `json:"project_id"`
-	Mode         string    `json:"mode"`
-	BaseCommit   string    `json:"base_commit"`
-	TargetCommit string    `json:"target_commit"`
-	TaskID       *int64    `json:"task_id,omitempty"`
-	Status       string    `json:"status"`
-	ErrorMessage string    `json:"error_message"`
-	CreatedBy    *int64    `json:"created_by,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           int64      `json:"id"`
+	ProjectID    int64      `json:"project_id"`
+	Mode         string     `json:"mode"`
+	BaseCommit   string     `json:"base_commit"`
+	TargetCommit string     `json:"target_commit"`
+	BaseTaskID   *int64     `json:"base_task_id,omitempty"`
+	TaskID       *int64     `json:"task_id,omitempty"`
+	SourcePath   string     `json:"source_path,omitempty"`
+	ChangedFiles int        `json:"changed_files"`
+	DeltaCells   int        `json:"delta_cells"`
+	PreparedAt   *time.Time `json:"prepared_at,omitempty"`
+	Status       string     `json:"status"`
+	ErrorMessage string     `json:"error_message"`
+	CreatedBy    *int64     `json:"created_by,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
-const projectAuditCols = `id,project_id,mode,base_commit,target_commit,task_id,status,error_message,created_by,created_at,updated_at`
+const projectAuditCols = `id,project_id,mode,base_commit,target_commit,base_task_id,task_id,source_path,changed_files,delta_cells,prepared_at,status,error_message,created_by,created_at,updated_at`
 
 func scanProjectAudit(sc interface{ Scan(...any) error }) (*ProjectAuditRun, error) {
 	var r ProjectAuditRun
+	var baseTaskID sql.NullInt64
 	var taskID sql.NullInt64
+	var preparedAt sql.NullTime
 	var createdBy sql.NullInt64
-	if err := sc.Scan(&r.ID, &r.ProjectID, &r.Mode, &r.BaseCommit, &r.TargetCommit, &taskID,
+	if err := sc.Scan(&r.ID, &r.ProjectID, &r.Mode, &r.BaseCommit, &r.TargetCommit, &baseTaskID, &taskID,
+		&r.SourcePath, &r.ChangedFiles, &r.DeltaCells, &preparedAt,
 		&r.Status, &r.ErrorMessage, &createdBy, &r.CreatedAt, &r.UpdatedAt); err != nil {
 		return nil, err
 	}
+	if baseTaskID.Valid {
+		r.BaseTaskID = &baseTaskID.Int64
+	}
 	if taskID.Valid {
 		r.TaskID = &taskID.Int64
+	}
+	if preparedAt.Valid {
+		r.PreparedAt = &preparedAt.Time
 	}
 	if createdBy.Valid {
 		r.CreatedBy = &createdBy.Int64
@@ -48,6 +62,26 @@ VALUES ($1,$2,$3,$4,'fetching',$5) RETURNING id`,
 		return nil, err
 	}
 	return s.GetAudit(id)
+}
+
+func (s *CodeProjectStore) StartIncrementalAudit(projectID, baseTaskID int64, baseCommit, targetCommit string, createdBy *int64) (*ProjectAuditRun, error) {
+	var id int64
+	err := s.db.QueryRow(`
+INSERT INTO project_audit_runs(project_id,mode,base_commit,target_commit,base_task_id,status,created_by)
+VALUES ($1,'incremental',$2,$3,$4,'preparing',$5) RETURNING id`,
+		projectID, baseCommit, targetCommit, baseTaskID, createdBy).Scan(&id)
+	if err != nil {
+		return nil, err
+	}
+	return s.GetAudit(id)
+}
+
+func (s *CodeProjectStore) MarkAuditPrepared(id int64, sourcePath string, changedFiles, deltaCells int) error {
+	_, err := s.db.Exec(`
+UPDATE project_audit_runs SET source_path=$2, changed_files=$3, delta_cells=$4,
+    status='prepared', prepared_at=now(), updated_at=now() WHERE id=$1`,
+		id, sourcePath, changedFiles, deltaCells)
+	return err
 }
 
 func (s *CodeProjectStore) GetAudit(id int64) (*ProjectAuditRun, error) {

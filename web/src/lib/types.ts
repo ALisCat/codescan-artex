@@ -1166,8 +1166,13 @@ export interface ProjectAuditRun {
   mode: "full" | "incremental";
   base_commit: string;
   target_commit: string;
+  base_task_id?: number | null;
   task_id?: number | null;
-  status: "fetching" | "ready" | "failed" | string;
+  source_path?: string;
+  changed_files: number;
+  delta_cells: number;
+  prepared_at?: string;
+  status: "fetching" | "preparing" | "prepared" | "ready" | "audited" | "failed" | string;
   error_message: string;
   created_by?: number | null;
   created_at: string;
