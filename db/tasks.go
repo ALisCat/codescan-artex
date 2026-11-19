@@ -58,7 +58,9 @@ type Task struct {
 	// CreatedBy 是创建者账号 id（nil = 历史任务/系统创建）。
 	CreatedBy *int64 `json:"created_by,omitempty"`
 	// SourcePath 是任务源码目录（相对 data 根的路径），上传源码包创建任务后写入。
-	SourcePath string `json:"source_path,omitempty"`
+	SourcePath  string `json:"source_path,omitempty"`
+	MatrixState string `json:"matrix_state,omitempty"`
+	MatrixError string `json:"matrix_error,omitempty"`
 }
 
 // TaskDeleteResult reports optional related-data cleanup performed in the same
@@ -374,11 +376,11 @@ func insertTaskLLMProfiles(tx *sql.Tx, taskID int64, profileIDs []int64) error {
 const taskCols = `id, COALESCE(name,''), category_id,
 COALESCE((SELECT category.name FROM task_categories category WHERE category.id=tasks.category_id),''),
 description, goal, exploration_id, status, paused, queued, queued_at, COALESCE(queue_mode,''), llm_profile_id, active_llm_profile_id, COALESCE(parent_ref,''), pinned_at, created_at, completed_at, COALESCE(timeout_seconds,0), COALESCE(plan_heartbeat_seconds,300), COALESCE(coverage_enabled,true), first_run_at, deadline_at, department_id,
-COALESCE((SELECT dep.name FROM departments dep WHERE dep.id=tasks.department_id),''), created_by, COALESCE(source_path,'')`
+COALESCE((SELECT dep.name FROM departments dep WHERE dep.id=tasks.department_id),''), created_by, COALESCE(source_path,''), COALESCE(matrix_state,''), COALESCE(matrix_error,'')`
 
 func scanTask(sc interface{ Scan(...any) error }) (*Task, error) {
 	var t Task
-	if err := sc.Scan(&t.ID, &t.Name, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.PlanHeartbeatSeconds, &t.CoverageEnabled, &t.FirstRunAt, &t.DeadlineAt, &t.DepartmentID, &t.DepartmentName, &t.CreatedBy, &t.SourcePath); err != nil {
+	if err := sc.Scan(&t.ID, &t.Name, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.PlanHeartbeatSeconds, &t.CoverageEnabled, &t.FirstRunAt, &t.DeadlineAt, &t.DepartmentID, &t.DepartmentName, &t.CreatedBy, &t.SourcePath, &t.MatrixState, &t.MatrixError); err != nil {
 		return nil, err
 	}
 	t.Pinned = t.PinnedAt != nil
@@ -389,6 +391,11 @@ func scanTask(sc interface{ Scan(...any) error }) (*Task, error) {
 // (relative to the data root; "" clears it).
 func (d *DB) SetTaskSourcePath(id int64, sourcePath string) error {
 	_, err := d.Exec(`UPDATE tasks SET source_path=$2 WHERE id=$1`, id, strings.TrimSpace(sourcePath))
+	return err
+}
+
+func (d *DB) SetTaskMatrixState(id int64, state, errText string) error {
+	_, err := d.Exec(`UPDATE tasks SET matrix_state=$2, matrix_error=$3 WHERE id=$1`, id, state, errText)
 	return err
 }
 

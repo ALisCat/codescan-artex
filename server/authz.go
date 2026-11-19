@@ -341,6 +341,19 @@ func (s *Server) startTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "该任务没有源码包，无法开启审计；请删除本任务后重新创建并上传源码")
 		return
 	}
+	life := t.lifecycleSnapshot()
+	switch life.MatrixState {
+	case "pending", "running":
+		writeErr(w, http.StatusConflict, "审计矩阵正在准备中，请稍候再开启任务")
+		return
+	case "failed":
+		msg := strings.TrimSpace(life.MatrixError)
+		if msg == "" {
+			msg = "未知错误"
+		}
+		writeErr(w, http.StatusConflict, "审计矩阵准备失败："+msg)
+		return
+	}
 	// 没装 LLM 就开不动：engine 处于 idle，任务会一直停在 created，用户只会看到
 	// 「点了开启但状态没变」。这里直接说清楚要去哪配，而不是返回 200 让人干等。
 	// 用 ReadyFor(t) 而不是 Ready()：任务自带 LLM 配置链时，即使没有全局默认也能跑。

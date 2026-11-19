@@ -432,6 +432,8 @@ function TaskDetailInner() {
   const terminal = ["done", "failed", "timeout"].includes(task.status);
   // created = 源码已就绪但用户还没点「开启任务」：此时没有可暂停/恢复的东西。
   const notStarted = task.status === "created";
+  const matrixPending = task.matrix_state === "pending" || task.matrix_state === "running";
+  const matrixFailed = task.matrix_state === "failed";
   const archiveLifecycleEligible = terminal || paused || task.status === "paused";
   const canArchive = archiveLifecycleEligible && !task.archive_blocked_by_task_id;
   let archiveDisabledReason = task.queued ? "排队中的任务必须先暂停" : "运行中的任务必须先暂停";
@@ -487,9 +489,14 @@ function TaskDetailInner() {
           <Separator orientation="vertical" className="mx-1 hidden h-4 sm:block" />
           {/* 手动开启任务：仅 created（且可写）时出现；开启后状态变化，按钮自然消失。 */}
           {notStarted && canWrite && (
-            <Button size="sm" onClick={() => void startTask()} disabled={starting} title="开始执行本任务的审计流程">
-              {starting ? <Spinner data-icon="inline-start" /> : <RocketIcon data-icon="inline-start" />}
-              开启任务
+            <Button
+              size="sm"
+              onClick={() => void startTask()}
+              disabled={starting || matrixPending || matrixFailed}
+              title={matrixPending ? "审计矩阵准备中，请稍候" : matrixFailed ? task.matrix_error || "审计矩阵准备失败" : "开始执行本任务的审计流程"}
+            >
+              {starting || matrixPending ? <Spinner data-icon="inline-start" /> : <RocketIcon data-icon="inline-start" />}
+              {matrixPending ? "矩阵准备中" : "开启任务"}
             </Button>
           )}
           <TaskLLMControl task={task} profiles={profiles} canWrite={canWrite} onUpdated={load} />
@@ -630,10 +637,19 @@ function TaskDetailInner() {
                 <p className="text-sm font-medium">
                   {!canWrite
                     ? "任务尚未开启"
-                    : task.source_path
-                      ? "源码已就绪，点击右上角「开启任务」开始审计"
-                      : "任务尚未开启，点击右上角「开启任务」开始审计"}
+                    : matrixPending
+                      ? "正在生成审计矩阵，完成后才能开启任务"
+                      : matrixFailed
+                        ? "审计矩阵生成失败"
+                        : task.source_path
+                          ? "源码已就绪，点击右上角「开启任务」开始审计"
+                          : "任务尚未开启，点击右上角「开启任务」开始审计"}
                 </p>
+                {matrixFailed && (
+                  <p className="text-xs text-red-600 dark:text-red-400">
+                    {task.matrix_error || "请删除任务后重新上传源码"}
+                  </p>
+                )}
                 {task.source_path ? (
                   <p className="text-xs text-muted-foreground">
                     源码目录：

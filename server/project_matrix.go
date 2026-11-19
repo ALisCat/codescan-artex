@@ -213,28 +213,79 @@ func sourceHasJava(dir string) bool {
 	return found
 }
 
-// prepareLocalUploadMatrix is called after an uploaded/GitHub source tree has
-// been attached to a task. It is intentionally best-effort for non-Java trees and
-// returns an error only when a Java tree could not get a matrix.
-func (s *Server) prepareLocalUploadMatrix(t *Task) error {
+// prepareLocalUploadMatrix performs the one-time matrix preparation for a local
+// upload. It returns hasJava=false when the task should keep the normal planner
+// path. The caller owns the context and the task matrix_state transition.
+func (s *Server) prepareLocalUploadMatrix(ctx context.Context, t *Task) (bool, error) {
 	if t == nil || strings.TrimSpace(t.SourcePath) == "" {
-		return nil
+		return false, nil
 	}
 	sourceDir := filepath.Join(s.m.dir, filepath.FromSlash(t.SourcePath))
 	if fi, err := os.Stat(sourceDir); err != nil || !fi.IsDir() {
-		return fmt.Errorf("任务源码目录不存在: %s", sourceDir)
+		return false, fmt.Errorf("任务源码目录不存在: %s", sourceDir)
 	}
 	if err := normalizeSingleSourceRoot(sourceDir); err != nil {
-		return fmt.Errorf("归一化源码目录失败: %w", err)
+		return false, fmt.Errorf("归一化源码目录失败: %w", err)
 	}
 	if !sourceHasJava(sourceDir) {
 		log.Printf("[matrix] task %s 没有 Java 源码，跳过矩阵流水线", t.ID)
-		return nil
+		return false, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
 	if _, _, err := s.prepareTaskMatrix(ctx, t, false); err != nil {
-		return err
+		return true, err
 	}
-	return nil
+	return true, nil
+}
+
+// startLocalMatrixPreparation moves matrix generation off the create-task HTTP
+// request. The task row exists immediately; startTask refuses to run while this
+// background job is pending/running.
+func (s *Server) startLocalMatrixPreparation(t *Task, autoStart bool) {
+	if t == nil || strings.TrimSpace(t.SourcePath) == "" {
+		return
+	}
+	if _, loaded := s.matrixJobs.LoadOrStore(t.ID, struct{}{}); loaded {
+		return
+	}
+	_ = s.m.SetTaskMatrixState(t.ID, "pending", "")
+	go func() {
+		defer s.matrixJobs.Delete(t.ID)
+		_ = s.m.SetTaskMatrixState(t.ID, "running", "")
+		ctx, cancel := context.WithTimeout(s.ctx, 10*time.Minute)
+		defer cancel()
+		hasJava, err := s.prepareLocalUploadMatrix(ctx, t)
+		if err != nil {
+			_ = s.m.SetTaskMatrixState(t.ID, "failed", err.Error())
+			log.Printf("[matrix] task %s 自动矩阵失败: %v", t.ID, err)
+			return
+		}
+		state := "skipped"
+		if hasJava {
+			state = "ready"
+		}
+		_ = s.m.SetTaskMatrixState(t.ID, state, "")
+		log.Printf("[matrix] task %s 自动矩阵准备完成: %s", t.ID, state)
+		if autoStart {
+			// Re-check the lifecycle: the user may have paused/deleted the task
+			// while the matrix was being prepared.
+			if cur, ok := s.m.Task(t.ID); ok && cur == t {
+				life := cur.lifecycleSnapshot()
+				if !life.Paused && !isTerminalStatus(life.Status) {
+					s.launchTask(t, t.Description+" "+t.Goal, false)
+				}
+			}
+		}
+	}()
+}
+
+// recoverMatrixPreparations resumes background matrix jobs after a restart.
+// It deliberately does not auto-start tasks; the user can open them manually.
+func (s *Server) recoverMatrixPreparations() {
+	for _, t := range s.m.List() {
+		life := t.lifecycleSnapshot()
+		if (life.MatrixState == "pending" || life.MatrixState == "running") && strings.TrimSpace(t.SourcePath) != "" {
+			log.Printf("[matrix] 恢复任务 %s 的矩阵准备", t.ID)
+			s.startLocalMatrixPreparation(t, false)
+		}
+	}
 }

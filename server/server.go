@@ -48,6 +48,7 @@ type Server struct {
 	githubMu   sync.Mutex
 	githubSrc  *githubsrc.Client
 	importJobs sync.Map // uploadID -> *githubImportJob
+	matrixJobs sync.Map // taskID -> struct{}，local upload matrix preparation
 
 	skillDir string // root directory for skill subdirectories
 	jwtKey   []byte // HS256 signing key loaded from / generated into dataDir/jwt.key
@@ -278,6 +279,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		log.Printf("[engine] no LLM provider configured — engine idle until set via /api/llm or env")
 	}
 	s.restoreTaskRuntimes()
+	s.recoverMatrixPreparations()
 	go s.reconcileConcurrency()
 	s.startTaskArchiveWorker()
 	s.wireInterceptReviewer() // LLM 兜底审批:未命中拦截规则的命令交给模型判定
@@ -1711,20 +1713,14 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	// 本地 zip / 仓库导入任务也走矩阵：源码就绪后先建矩阵，再允许开跑。
-	// 非 Java 源码跳过；Java 源码矩阵失败则删除任务，避免留下无矩阵的“假审计任务”。
-	if err := s.prepareLocalUploadMatrix(t); err != nil {
-		if _, derr := s.m.DeleteTask(t.ID, DeleteTaskOptions{DeleteFiles: true}); derr != nil {
-			log.Printf("[task] 清理矩阵失败任务: %v", derr)
-		}
-		writeErr(w, 500, "生成审计矩阵失败："+err.Error())
-		return
-	}
+	// 本地 zip / 仓库导入任务在后台生成矩阵；任务创建接口不再被矩阵耗时阻塞。
+	// 矩阵 pending/running 期间 startTask 会拒绝启动；非 Java 源码会自动标记 skipped。
+	s.startLocalMatrixPreparation(t, req.AutoStart != nil && *req.AutoStart)
 	log.Printf("[task] 新建任务 #%s «%s» 部门=%v", t.ID, req.Description, req.DepartmentID)
-	// 是否立即开跑：web 端默认「先创建、再由用户进任务详情手动开启」，所以只有显式
-	// auto_start=true（或编排 spawn 路径）才会走 launchTask。
 	if req.AutoStart != nil && *req.AutoStart {
-		s.launchTask(t, req.Description+" "+req.Goal, req.SeedFirstIntent != nil && *req.SeedFirstIntent)
+		// Matrix preparation launches the task after it reaches ready. Do not
+		// launch here, or the standard planner can start before ca_cells exist.
+		log.Printf("[task] 任务 #%s 等待矩阵准备完成后自动开启", t.ID)
 	} else {
 		log.Printf("[task] 任务 #%s 已创建，等待用户在任务详情页手动开启", t.ID)
 	}

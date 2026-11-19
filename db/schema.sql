@@ -1596,6 +1596,10 @@ CREATE TRIGGER trg_task_dependencies_upd BEFORE UPDATE ON task_dependencies
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 
+-- 任务矩阵准备状态：本地 zip / 仓库导入任务在后台生成矩阵时，禁止提前开跑。
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS matrix_state TEXT NOT NULL DEFAULT '';
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS matrix_error TEXT NOT NULL DEFAULT '';
+
 -- =====================================================================
 -- 代码源项目管理（GitLab 优先）
 -- =====================================================================

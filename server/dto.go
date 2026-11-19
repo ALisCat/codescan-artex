@@ -67,6 +67,8 @@ type TaskDTO struct {
 	DepartmentName string `json:"department_name,omitempty"`
 	CreatedBy      *int64 `json:"created_by,omitempty"`
 	SourcePath     string `json:"source_path,omitempty"`
+	MatrixState    string `json:"matrix_state,omitempty"`
+	MatrixError    string `json:"matrix_error,omitempty"`
 	// 源码来源（仅 GitHub 导入时填充）。审计结论要能回溯到「哪次提交」，
 	// 这些字段从消费掉的那行 task_uploads 读出，不额外存一份。
 	SourceOrigin string `json:"source_origin,omitempty"`
@@ -151,6 +153,8 @@ func taskDTO(t *Task, status string) TaskDTO {
 		DepartmentName:     t.DepartmentName,
 		CreatedBy:          t.CreatedBy,
 		SourcePath:         t.SourcePath,
+		MatrixState:        lifecycle.MatrixState,
+		MatrixError:        lifecycle.MatrixError,
 	}
 }
 

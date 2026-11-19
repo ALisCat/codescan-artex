@@ -48,6 +48,8 @@ export interface Task {
   source_url?: string;
   source_ref?: string;
   source_commit?: string;
+  matrix_state?: "pending" | "running" | "ready" | "failed" | "skipped" | string;
+  matrix_error?: string;
   can_write?: boolean; // 当前账号对该任务是否有写权限（部门访客=false，前端据此只读）
 }
 
