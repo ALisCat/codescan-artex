@@ -757,21 +757,23 @@ function DetailInner() {
                 {preparedRun.changed_files} 个变更文件 · 影响接口 {affectedEndpoints.size} 个，自动分析发现{" "}
                 {autoRiskEndpoints.size} 个接口可能存在风险，已录入矩阵；未变更格从基线任务只读继承。
               </div>
+              {rejectedRiskKeys.size > 0 && (
+                <div className="text-muted-foreground mt-1 flex items-center gap-1 text-xs">
+                  已否定 {rejectedRiskKeys.size} 项自动分析结果
+                  <button
+                    type="button"
+                    className="text-foreground underline underline-offset-2"
+                    onClick={() => setRejectedRiskKeys(new Set())}
+                  >
+                    恢复
+                  </button>
+                </div>
+              )}
 
               <div className={`mt-3 grid gap-3 ${autoRiskRows.length > 0 && (preparedRun.delta_gaps?.length ?? 0) > 0 ? "lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]" : ""}`}>
                 {autoRiskRows.length > 0 && (
                   <div className="overflow-hidden rounded-md border bg-background/60">
-                    <div className="flex items-center justify-between gap-2 border-b px-3 py-2 text-xs font-medium">
-                      <span>增量分析 · 自动发现的风险类型</span>
-                      {rejectedRiskKeys.size > 0 && (
-                        <span className="text-muted-foreground flex items-center gap-1 font-normal">
-                          已否定 {rejectedRiskKeys.size} 项
-                          <button type="button" className="underline underline-offset-2" onClick={() => setRejectedRiskKeys(new Set())}>
-                            恢复
-                          </button>
-                        </span>
-                      )}
-                    </div>
+                    <div className="border-b px-3 py-2 text-xs font-medium">增量分析 · 自动发现的风险类型</div>
                     <table className="w-full text-left text-[11px]">
                       <thead className="text-muted-foreground border-b">
                         <tr>
