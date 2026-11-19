@@ -1135,6 +1135,18 @@ export interface ChangeSummary {
   deletions: number;
 }
 
+export interface ChangeScope {
+  base_commit: string;
+  target_commit: string;
+  commits: { id: string; short_id?: string; title: string; author_name?: string; created_at?: string }[];
+  files: ChangeFile[];
+  endpoints: ChangeEndpoint[];
+  summary: ChangeSummary;
+  warnings: string[];
+  diff_truncated: boolean;
+  compare_timeout: boolean;
+}
+
 export interface ChangePreview {
   available: boolean;
   needs_full: boolean;
@@ -1157,6 +1169,8 @@ export interface ChangePreview {
   warnings: string[];
   diff_truncated: boolean;
   compare_timeout: boolean;
+  unreviewed?: ChangeScope;
+  reviewed?: ChangeScope;
   error?: string;
 }
 

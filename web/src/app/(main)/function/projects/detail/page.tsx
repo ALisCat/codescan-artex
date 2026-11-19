@@ -137,6 +137,7 @@ function DetailInner() {
   const [starting, setStarting] = React.useState(false);
   const [preparingIncremental, setPreparingIncremental] = React.useState(false);
   const [detailsOpen, setDetailsOpen] = React.useState(false);
+  const [incrementalTab, setIncrementalTab] = React.useState<"unreviewed" | "reviewed">("unreviewed");
   const [reviewDialogOpen, setReviewDialogOpen] = React.useState(false);
   const [preview, setPreview] = React.useState<ChangePreview | null>(null);
   const [previewLoading, setPreviewLoading] = React.useState(false);
@@ -218,6 +219,9 @@ function DetailInner() {
     try {
       const r = await api.projectChangePreview(p.id);
       setPreview(r);
+      const unread = r.unreviewed?.summary.commits ?? 0;
+      const reviewed = r.reviewed?.summary.commits ?? 0;
+      setIncrementalTab(unread === 0 && reviewed > 0 ? "reviewed" : "unreviewed");
       if (r.error) setPreviewError(r.error);
     } catch (e) {
       setPreviewError((e as Error).message);
@@ -338,6 +342,22 @@ function DetailInner() {
     (!p.last_seen_commit || latestAudit.target_commit === p.last_seen_commit)
       ? latestAudit
       : null;
+  const activeScope = incrementalTab === "reviewed" ? preview?.reviewed : preview?.unreviewed;
+  const unreadCount = preview?.unreviewed?.summary.commits ?? preview?.review_summary?.commits ?? 0;
+  const reviewedCount =
+    preview?.reviewed?.summary.commits ?? Math.max(0, (preview?.audit_gap.commits ?? 0) - unreadCount);
+  const emptySummary = { commits: 0, files_changed: 0, additions: 0, deletions: 0 };
+  const activeSummary =
+    activeScope?.summary ??
+    (incrementalTab === "unreviewed" ? preview?.review_summary : emptySummary) ??
+    emptySummary;
+  const activeCommits =
+    activeScope?.commits ?? (incrementalTab === "unreviewed" ? preview?.review_commits ?? [] : []);
+  const activeFiles = activeScope?.files ?? [];
+  const activeEndpoints = activeScope?.endpoints ?? [];
+  const activeWarnings = activeScope?.warnings ?? [];
+  const activeBase = activeScope?.base_commit || (incrementalTab === "unreviewed" ? preview?.review_base_commit : preview?.base_commit);
+  const activeTarget = activeScope?.target_commit || preview?.target_commit;
   const incrementalState = !p.last_audited_commit
     ? { label: "需要全量基线", tone: "warning" }
     : previewLoading
@@ -347,9 +367,13 @@ function DetailInner() {
         : latestPrepared
           ? { label: "增量已准备", tone: "ok" }
           : preview
-            ? reviewed
-              ? { label: "已阅，未审计", tone: "warning" }
-              : { label: "待决定", tone: "warning" }
+            ? unreadCount > 0
+              ? { label: reviewedCount > 0 ? "待处理" : "有新变更", tone: "warning" }
+              : reviewedCount > 0
+                ? { label: "已阅，未审计", tone: "warning" }
+                : reviewed
+                  ? { label: "本次已标记已阅", tone: "ok" }
+                  : { label: "待决定", tone: "warning" }
             : { label: "有新提交", tone: "warning" };
   const stateClass =
     incrementalState.tone === "ok"
@@ -578,25 +602,63 @@ function DetailInner() {
 
           {preview && !preview.needs_full && !preview.no_changes && (
             <>
+              <div className="bg-muted/20 flex flex-col gap-2 rounded-lg border p-1.5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-wrap gap-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={incrementalTab === "unreviewed" ? "secondary" : "ghost"}
+                    onClick={() => {
+                      setIncrementalTab("unreviewed");
+                      setDetailsOpen(false);
+                    }}
+                  >
+                    未阅
+                    <Badge variant="outline" className="tabular-nums">
+                      {unreadCount}
+                    </Badge>
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={incrementalTab === "reviewed" ? "secondary" : "ghost"}
+                    onClick={() => {
+                      setIncrementalTab("reviewed");
+                      setDetailsOpen(false);
+                    }}
+                  >
+                    已阅未审计
+                    <Badge variant="outline" className="tabular-nums">
+                      {reviewedCount}
+                    </Badge>
+                  </Button>
+                </div>
+                {activeBase && activeTarget && (
+                  <span className="text-muted-foreground px-2 font-mono text-xs">
+                    范围 {shortCommit(activeBase)} → {shortCommit(activeTarget)}
+                  </span>
+                )}
+              </div>
+
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <div className="rounded-lg border p-3">
                   <div className="text-muted-foreground text-xs">提交</div>
-                  <div className="mt-1 text-2xl font-semibold tabular-nums">{preview.audit_gap.commits}</div>
+                  <div className="mt-1 text-2xl font-semibold tabular-nums">{activeSummary.commits}</div>
                 </div>
                 <div className="rounded-lg border p-3">
                   <div className="text-muted-foreground text-xs">文件</div>
-                  <div className="mt-1 text-2xl font-semibold tabular-nums">{preview.audit_gap.files_changed}</div>
+                  <div className="mt-1 text-2xl font-semibold tabular-nums">{activeSummary.files_changed}</div>
                 </div>
                 <div className="rounded-lg border p-3">
                   <div className="text-muted-foreground text-xs">新增行</div>
                   <div className="mt-1 text-2xl font-semibold text-emerald-600 tabular-nums dark:text-emerald-400">
-                    +{preview.audit_gap.additions}
+                    +{activeSummary.additions}
                   </div>
                 </div>
                 <div className="rounded-lg border p-3">
                   <div className="text-muted-foreground text-xs">删除行</div>
                   <div className="mt-1 text-2xl font-semibold text-red-600 tabular-nums dark:text-red-400">
-                    -{preview.audit_gap.deletions}
+                    -{activeSummary.deletions}
                   </div>
                 </div>
               </div>
@@ -605,16 +667,6 @@ function DetailInner() {
                 <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
                   审计缺口：{preview.audit_gap.commits} 个提交 / {preview.audit_gap.files_changed} 个文件
                 </Badge>
-                {!preview.review_same_as_audit && !reviewed && (
-                  <span className="text-muted-foreground text-xs">
-                    自上次已阅：{preview.review_summary.commits} 个提交 / {preview.review_summary.files_changed} 个文件
-                  </span>
-                )}
-                {reviewed && (
-                  <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
-                    本次已标记已阅
-                  </Badge>
-                )}
                 {latestPrepared && (
                   <Badge variant="outline" className="border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300">
                     增量源码已准备
@@ -624,9 +676,25 @@ function DetailInner() {
 
               <div className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <div className="text-sm font-medium">这次变更怎么处理？</div>
+                  <div className="text-sm font-medium">
+                    {activeSummary.commits === 0
+                      ? incrementalTab === "reviewed"
+                        ? "没有已阅未审计变更"
+                        : "没有未阅变更"
+                      : incrementalTab === "reviewed"
+                        ? "这些变更已阅，但还没有审计"
+                        : "这次新变更怎么处理？"}
+                  </div>
                   <div className="text-muted-foreground text-xs">
-                    审计会从上次审计基线开始；已阅不会跳过未审计代码。
+                    {activeSummary.commits === 0
+                      ? incrementalTab === "reviewed"
+                        ? "新变更标记已阅后会保留在这里，直到完成增量审计。"
+                        : "已阅但未审计的变更在「已阅未审计」模块。"
+                      : incrementalTab === "reviewed"
+                        ? unreadCount > 0
+                          ? "准备增量审计会同时覆盖未阅和已阅未审计变更。"
+                          : "已阅不会改变审计基线；增量审计会覆盖这些代码。"
+                        : "标记已阅只会移入「已阅未审计」，审计基线保持不变。"}
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -634,30 +702,32 @@ function DetailInner() {
                     {preparingIncremental ? <Loader2Icon className="size-4 animate-spin" /> : <ShieldCheckIcon className="size-4" />}
                     {latestPrepared ? "增量已准备" : "准备增量审计"}
                   </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setReviewDialogOpen(true)}
-                    disabled={reviewing || reviewed}
-                  >
-                    <CheckCircle2Icon className="size-4" />
-                    {reviewed ? "已标记已阅" : "本次无需审计"}
-                  </Button>
+                  {incrementalTab === "unreviewed" && unreadCount > 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setReviewDialogOpen(true)}
+                      disabled={reviewing || reviewed}
+                    >
+                      <CheckCircle2Icon className="size-4" />
+                      {reviewed ? "已标记已阅" : "本次无需审计"}
+                    </Button>
+                  )}
                 </div>
               </div>
 
               <Button variant="ghost" size="sm" className="-ml-2" onClick={() => setDetailsOpen((v) => !v)}>
                 {detailsOpen ? <ChevronUpIcon className="size-4" /> : <ChevronDownIcon className="size-4" />}
-                {detailsOpen ? "收起变更详情" : "查看文件、提交和接口详情"}
+                {detailsOpen ? "收起当前模块详情" : "查看当前模块的文件、提交和接口详情"}
               </Button>
 
               {detailsOpen && (
                 <div className="space-y-4 border-t pt-4">
-                  {preview.commits.length > 0 && (
+                  {activeCommits.length > 0 && (
                     <div className="space-y-2">
                       <div className="text-sm font-medium">提交列表</div>
                       <div className="space-y-1 rounded-lg border">
-                        {preview.commits.slice(0, 20).map((c) => (
+                        {activeCommits.slice(0, 20).map((c) => (
                           <div key={c.id} className="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs last:border-b-0">
                             <span className="text-muted-foreground font-mono">{shortCommit(c.id || c.short_id || "")}</span>
                             <span className="min-w-0 flex-1 truncate">{c.title}</span>
@@ -670,22 +740,22 @@ function DetailInner() {
 
                   <div className="space-y-2">
                     <div className="text-sm font-medium">变更文件（点击展开 diff）</div>
-                    {preview.files.length === 0 ? (
-                      <div className="text-muted-foreground text-sm">没有文件变更。</div>
+                    {activeFiles.length === 0 ? (
+                      <div className="text-muted-foreground text-sm">当前模块没有文件变更。</div>
                     ) : (
                       <div className="space-y-2">
-                        {preview.files.map((f) => (
-                          <ChangeFileRow key={`${f.old_path}:${f.new_path}`} file={f} />
+                        {activeFiles.map((f) => (
+                          <ChangeFileRow key={`${activeScope?.base_commit}:${f.old_path}:${f.new_path}`} file={f} />
                         ))}
                       </div>
                     )}
                   </div>
 
-                  {preview.endpoints.length > 0 && (
+                  {activeEndpoints.length > 0 && (
                     <div className="space-y-2">
                       <div className="text-sm font-medium">直接受影响接口</div>
                       <div className="flex flex-wrap gap-2">
-                        {preview.endpoints.map((ep, i) => (
+                        {activeEndpoints.map((ep, i) => (
                           <Badge key={`${ep.method}:${ep.path}:${i}`} variant="outline" className="font-mono">
                             {ep.method} {ep.path}
                           </Badge>
@@ -694,9 +764,9 @@ function DetailInner() {
                     </div>
                   )}
 
-                  {preview.warnings.length > 0 && (
+                  {Array.from(new Set([...activeWarnings, ...preview.warnings])).length > 0 && (
                     <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-700 dark:text-amber-300">
-                      {preview.warnings.map((w, i) => (
+                      {Array.from(new Set([...activeWarnings, ...preview.warnings])).map((w, i) => (
                         <div key={i}>{w}</div>
                       ))}
                     </div>

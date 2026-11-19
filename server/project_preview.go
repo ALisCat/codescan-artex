@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/gitlabsrc"
 )
 
@@ -49,6 +50,18 @@ type changeSummary struct {
 	Deletions    int `json:"deletions"`
 }
 
+type changeScope struct {
+	BaseCommit     string                    `json:"base_commit"`
+	TargetCommit   string                    `json:"target_commit"`
+	Commits        []gitlabsrc.CompareCommit `json:"commits"`
+	Files          []changeFile              `json:"files"`
+	Endpoints      []changeEndpoint          `json:"endpoints"`
+	Summary        changeSummary             `json:"summary"`
+	Warnings       []string                  `json:"warnings"`
+	DiffTruncated  bool                      `json:"diff_truncated"`
+	CompareTimeout bool                      `json:"compare_timeout"`
+}
+
 type changePreview struct {
 	Available         bool                      `json:"available"`
 	NeedsFull         bool                      `json:"needs_full"`
@@ -71,6 +84,8 @@ type changePreview struct {
 	Warnings          []string                  `json:"warnings"`
 	DiffTruncated     bool                      `json:"diff_truncated"`
 	CompareTimeout    bool                      `json:"compare_timeout"`
+	Unreviewed        *changeScope              `json:"unreviewed,omitempty"`
+	Reviewed          *changeScope              `json:"reviewed,omitempty"`
 }
 
 var (
@@ -151,7 +166,7 @@ func (s *Server) projectChangePreview(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, out)
 		return
 	}
-	cmp, err := c.Compare(ctx, p.GitLabProjectID, out.BaseCommit, target)
+	audit, err := s.buildChangeScope(ctx, c, p, out.BaseCommit, target)
 	if err != nil {
 		writeJSON(w, 200, map[string]any{
 			"available": true, "needs_full": true,
@@ -160,111 +175,55 @@ func (s *Server) projectChangePreview(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	out.Commits = cmp.Commits
-	if out.Commits == nil {
-		out.Commits = []gitlabsrc.CompareCommit{}
-	}
-	out.CompareTimeout = cmp.CompareTimeout
-	if cmp.CompareTimeout {
-		out.Warnings = append(out.Warnings, "GitLab compare 超时，结果可能不完整，建议全量审计。")
-	}
-	rawBudget := maxPreviewRawFiles
-	diffBudget := maxPreviewDiffBytes
-	for i, d := range cmp.Diffs {
-		if i >= maxPreviewFiles {
-			out.DiffTruncated = true
-			out.Warnings = append(out.Warnings, fmt.Sprintf("变更文件超过 %d 个，仅展示前 %d 个。", maxPreviewFiles, maxPreviewFiles))
-			break
-		}
-		f := changeFile{
-			OldPath:   d.OldPath,
-			NewPath:   d.NewPath,
-			Path:      d.NewPath,
-			Status:    "modified",
-			Hunks:     []changeHunk{},
-			Endpoints: []changeEndpoint{},
-		}
-		switch {
-		case d.NewFile:
-			f.Status = "added"
-		case d.DeletedFile:
-			f.Status = "deleted"
-			f.Path = d.OldPath
-		case d.RenamedFile:
-			f.Status = "renamed"
-		}
-		if f.Path == "" {
-			f.Path = d.OldPath
-		}
-		f.Additions, f.Deletions, f.Hunks = parseDiffStats(d.Diff)
-		if diffBudget > 0 && len(d.Diff) <= diffBudget {
-			f.Diff = d.Diff
-			diffBudget -= len(d.Diff)
-		} else if d.Diff != "" {
-			f.DiffOmitted = true
-			out.DiffTruncated = true
-		}
-		if rawBudget > 0 && strings.HasSuffix(strings.ToLower(f.Path), ".java") {
-			rawPath := f.Path
-			ref := target
-			if f.Status == "deleted" {
-				rawPath = d.OldPath
-				ref = out.BaseCommit
-			}
-			raw, rawErr := c.RawFile(ctx, p.GitLabProjectID, rawPath, ref)
-			if rawErr == nil {
-				f.Endpoints = parseSpringEndpoints(raw, f.Path)
-				if f.Endpoints == nil {
-					f.Endpoints = []changeEndpoint{}
-				}
-				rawBudget--
-			} else {
-				out.Warnings = append(out.Warnings, fmt.Sprintf("未能读取 %s 做接口映射：%s", f.Path, rawErr.Error()))
-			}
-		}
-		out.Additions += f.Additions
-		out.Deletions += f.Deletions
-		out.Files = append(out.Files, f)
-		out.Endpoints = append(out.Endpoints, f.Endpoints...)
-	}
-	out.FilesChanged = len(out.Files)
-	if len(out.Files) > 0 && len(out.Endpoints) == 0 {
-		out.Warnings = append(out.Warnings, "未从变更文件中识别到 Controller 接口；请结合文件列表人工判断影响面。")
-	}
-	if len(out.Files) == 0 {
-		out.Warnings = append(out.Warnings, "compare 没有返回文件变更。")
-		if len(out.Commits) > 0 {
-			out.Warnings = append(out.Warnings, "区间内存在提交，但最终文件 diff 为空；可能只是中间提交被回滚或仅修改了元数据，审计仍以最终源码为准。")
+	out.Commits = audit.Commits
+	out.Files = audit.Files
+	out.Endpoints = audit.Endpoints
+	out.FilesChanged = audit.Summary.FilesChanged
+	out.Additions = audit.Summary.Additions
+	out.Deletions = audit.Summary.Deletions
+	out.AuditGap = audit.Summary
+	out.CompareTimeout = audit.CompareTimeout
+	out.DiffTruncated = audit.DiffTruncated
+	out.Warnings = append(out.Warnings, audit.Warnings...)
+
+	emptyScope := func(base, target string) *changeScope {
+		return &changeScope{
+			BaseCommit: base, TargetCommit: target,
+			Commits: []gitlabsrc.CompareCommit{}, Files: []changeFile{},
+			Endpoints: []changeEndpoint{}, Warnings: []string{},
 		}
 	}
-	out.AuditGap = changeSummary{
-		Commits: len(out.Commits), FilesChanged: out.FilesChanged,
-		Additions: out.Additions, Deletions: out.Deletions,
-	}
-	if out.ReviewBaseCommit == out.BaseCommit {
+	reviewBase := out.ReviewBaseCommit
+	if reviewBase == out.BaseCommit {
 		out.ReviewSameAsAudit = true
-		out.ReviewSummary = out.AuditGap
-		out.ReviewCommits = out.Commits
-	} else if out.ReviewBaseCommit != target {
-		rcmp, rerr := c.Compare(ctx, p.GitLabProjectID, out.ReviewBaseCommit, target)
+		out.Reviewed = emptyScope(out.BaseCommit, out.BaseCommit)
+		out.Unreviewed = audit
+	} else if reviewBase == target {
+		out.Reviewed = audit
+		out.Unreviewed = emptyScope(reviewBase, target)
+	} else {
+		reviewed, rerr := s.buildChangeScope(ctx, c, p, out.BaseCommit, reviewBase)
 		if rerr != nil {
-			out.Warnings = append(out.Warnings, "自上次已阅的 compare 失败："+rerr.Error())
-			out.ReviewSummary = out.AuditGap
-			out.ReviewCommits = out.Commits
+			out.Warnings = append(out.Warnings, "无法读取已阅区间，已回退到完整审计缺口："+rerr.Error())
+			out.ReviewSameAsAudit = true
+			out.Reviewed = emptyScope(out.BaseCommit, reviewBase)
+			out.Unreviewed = audit
 		} else {
-			rAdd, rDel := 0, 0
-			for _, d := range rcmp.Diffs {
-				a, del, _ := parseDiffStats(d.Diff)
-				rAdd += a
-				rDel += del
+			unreviewed, uerr := s.buildChangeScope(ctx, c, p, reviewBase, target)
+			if uerr != nil {
+				out.Warnings = append(out.Warnings, "无法读取未阅区间，已回退到完整审计缺口："+uerr.Error())
+				out.ReviewSameAsAudit = true
+				out.Reviewed = emptyScope(out.BaseCommit, reviewBase)
+				out.Unreviewed = audit
+			} else {
+				out.Reviewed = reviewed
+				out.Unreviewed = unreviewed
 			}
-			out.ReviewSummary = changeSummary{
-				Commits: len(rcmp.Commits), FilesChanged: len(rcmp.Diffs),
-				Additions: rAdd, Deletions: rDel,
-			}
-			out.ReviewCommits = rcmp.Commits
 		}
 	}
+	out.ReviewSummary = out.Unreviewed.Summary
+	out.ReviewCommits = out.Unreviewed.Commits
+
 	writeJSON(w, 200, out)
 }
 
@@ -451,4 +410,101 @@ func (s *Server) reviewProject(w http.ResponseWriter, r *http.Request) {
 	}
 	out, _ := s.m.pg.CodeProjects().Get(id)
 	writeJSON(w, 200, out)
+}
+
+// buildChangeScope computes one base→target range. It is used for the current
+// audit gap, the reviewed backlog, and the unreviewed range.
+func (s *Server) buildChangeScope(ctx context.Context, c *gitlabsrc.Client, p *db.CodeProject, base, target string) (*changeScope, error) {
+	scope := &changeScope{
+		BaseCommit:   base,
+		TargetCommit: target,
+		Commits:      []gitlabsrc.CompareCommit{},
+		Files:        []changeFile{},
+		Endpoints:    []changeEndpoint{},
+		Warnings:     []string{},
+	}
+	if strings.TrimSpace(base) == "" || strings.TrimSpace(target) == "" || base == target {
+		return scope, nil
+	}
+	cmp, err := c.Compare(ctx, p.GitLabProjectID, base, target)
+	if err != nil {
+		return nil, err
+	}
+	scope.Commits = cmp.Commits
+	if scope.Commits == nil {
+		scope.Commits = []gitlabsrc.CompareCommit{}
+	}
+	scope.CompareTimeout = cmp.CompareTimeout
+	if cmp.CompareTimeout {
+		scope.Warnings = append(scope.Warnings, "GitLab compare 超时，结果可能不完整。")
+	}
+	rawBudget := maxPreviewRawFiles
+	diffBudget := maxPreviewDiffBytes
+	for i, d := range cmp.Diffs {
+		if i >= maxPreviewFiles {
+			scope.DiffTruncated = true
+			scope.Warnings = append(scope.Warnings, fmt.Sprintf("变更文件超过 %d 个，仅展示前 %d 个。", maxPreviewFiles, maxPreviewFiles))
+			break
+		}
+		f := changeFile{
+			OldPath: d.OldPath, NewPath: d.NewPath, Path: d.NewPath, Status: "modified",
+			Hunks: []changeHunk{}, Endpoints: []changeEndpoint{},
+		}
+		switch {
+		case d.NewFile:
+			f.Status = "added"
+		case d.DeletedFile:
+			f.Status = "deleted"
+			f.Path = d.OldPath
+		case d.RenamedFile:
+			f.Status = "renamed"
+		}
+		if f.Path == "" {
+			f.Path = d.OldPath
+		}
+		f.Additions, f.Deletions, f.Hunks = parseDiffStats(d.Diff)
+		if diffBudget > 0 && len(d.Diff) <= diffBudget {
+			f.Diff = d.Diff
+			diffBudget -= len(d.Diff)
+		} else if d.Diff != "" {
+			f.DiffOmitted = true
+			scope.DiffTruncated = true
+		}
+		if rawBudget > 0 && strings.HasSuffix(strings.ToLower(f.Path), ".java") {
+			rawPath, ref := f.Path, target
+			if f.Status == "deleted" {
+				rawPath, ref = d.OldPath, base
+			}
+			raw, rawErr := c.RawFile(ctx, p.GitLabProjectID, rawPath, ref)
+			if rawErr == nil {
+				f.Endpoints = parseSpringEndpoints(raw, f.Path)
+				if f.Endpoints == nil {
+					f.Endpoints = []changeEndpoint{}
+				}
+				rawBudget--
+			} else {
+				scope.Warnings = append(scope.Warnings, fmt.Sprintf("未能读取 %s 做接口映射：%s", f.Path, rawErr.Error()))
+			}
+		}
+		scope.Files = append(scope.Files, f)
+		scope.Endpoints = append(scope.Endpoints, f.Endpoints...)
+	}
+	scope.Summary = changeSummary{
+		Commits: len(scope.Commits), FilesChanged: len(scope.Files),
+		Additions: 0, Deletions: 0,
+	}
+	for _, f := range scope.Files {
+		scope.Summary.Additions += f.Additions
+		scope.Summary.Deletions += f.Deletions
+	}
+	if len(scope.Files) > 0 && len(scope.Endpoints) == 0 {
+		scope.Warnings = append(scope.Warnings, "未从变更文件中识别到 Controller 接口；请结合文件列表人工判断影响面。")
+	}
+	if len(scope.Files) == 0 {
+		scope.Warnings = append(scope.Warnings, "compare 没有返回文件变更。")
+		if len(scope.Commits) > 0 {
+			scope.Warnings = append(scope.Warnings, "区间内存在提交，但最终文件 diff 为空；可能只是中间提交被回滚或仅修改了元数据，审计仍以最终源码为准。")
+		}
+	}
+	return scope, nil
 }
