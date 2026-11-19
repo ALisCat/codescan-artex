@@ -892,6 +892,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/projects/{id}/incremental-prepare", s.requireAdmin(s.prepareIncrementalAudit))
 	mux.HandleFunc("POST /api/projects/{id}/incremental-runs/{runID}/start", s.requireAdmin(s.startPreparedIncrementalAudit))
 	mux.HandleFunc("POST /api/projects/{id}/incremental-runs/{runID}/review-task", s.requireAdmin(s.startIncrementalReviewTask))
+	mux.HandleFunc("GET /api/projects/{id}/incremental-runs/{runID}/gap-cells", s.requireAdmin(s.listIncrementalGapCells))
 	mux.HandleFunc("GET /api/tasks/{id}/project-audit", s.getTaskProjectAudit)
 	mux.HandleFunc("GET /api/projects/{id}/change-preview", s.requireAdmin(s.projectChangePreview))
 	mux.HandleFunc("POST /api/projects/{id}/review", s.requireAdmin(s.reviewProject))

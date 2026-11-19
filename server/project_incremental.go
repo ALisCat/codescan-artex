@@ -495,6 +495,63 @@ func normalizeRangePath(path string) string {
 	return filepath.ToSlash(strings.ToLower(strings.TrimPrefix(strings.TrimSpace(path), "/")))
 }
 
+// GET /api/projects/{id}/incremental-runs/{runID}/gap-cells
+// Returns the target-matrix cells for endpoints in delta_gaps so the project
+// page can offer a simple vulnerability-type selector before starting a task.
+func (s *Server) listIncrementalGapCells(w http.ResponseWriter, r *http.Request) {
+	projectID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || projectID <= 0 {
+		writeErr(w, 400, "项目 ID 不合法")
+		return
+	}
+	runID, err := strconv.ParseInt(r.PathValue("runID"), 10, 64)
+	if err != nil || runID <= 0 {
+		writeErr(w, 400, "增量运行 ID 不合法")
+		return
+	}
+	run, err := s.m.pg.CodeProjects().GetAudit(runID)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if run == nil || run.ProjectID != projectID {
+		writeErr(w, 404, "增量运行不存在")
+		return
+	}
+	if len(run.DeltaGaps) == 0 || strings.TrimSpace(run.SourcePath) == "" {
+		writeJSON(w, 200, map[string]any{"cells": []any{}})
+		return
+	}
+	sourceDir := filepath.Join(s.m.dir, filepath.FromSlash(run.SourcePath))
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(sourceDir), "matrix", "import.json"))
+	if err != nil {
+		writeErr(w, 409, "增量矩阵文件不存在，请重新准备")
+		return
+	}
+	var full importCellsBody
+	if err := json.Unmarshal(raw, &full); err != nil {
+		writeErr(w, 500, "解析增量矩阵失败："+err.Error())
+		return
+	}
+	gaps := make(map[string]bool, len(run.DeltaGaps))
+	for _, gap := range run.DeltaGaps {
+		gaps[strings.TrimSpace(gap)] = true
+	}
+	cells := []map[string]any{}
+	for _, cell := range full.Tasks {
+		label := strings.TrimSpace(cell.Endpoint.Method + " " + cell.Endpoint.URL)
+		if !gaps[label] {
+			continue
+		}
+		cells = append(cells, map[string]any{
+			"cell_key": cell.CellKey, "method": cell.Endpoint.Method,
+			"url": cell.Endpoint.URL, "vulnclass": cell.VulnClass,
+			"eligibility": cell.Eligibility, "reason": cell.Reason,
+		})
+	}
+	writeJSON(w, 200, map[string]any{"cells": cells})
+}
+
 // POST /api/projects/{id}/incremental-runs/{runID}/start
 //
 // A prepared run has already copied the target source and generated the target
@@ -542,8 +599,21 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		writeErr(w, 409, "增量运行缺少基线任务")
 		return
 	}
-	if len(run.DeltaCellKeys) == 0 {
-		writeErr(w, 409, "该增量运行没有 delta 明细，请重新准备")
+	var req struct {
+		AutoStart      *bool    `json:"auto_start"`
+		ManualCellKeys []string `json:"manual_cell_keys"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	manualRequested := make(map[string]bool, len(req.ManualCellKeys))
+	for _, key := range req.ManualCellKeys {
+		if key = strings.TrimSpace(key); key != "" {
+			manualRequested[key] = true
+		}
+	}
+	if len(run.DeltaCellKeys) == 0 && len(manualRequested) == 0 {
+		writeErr(w, 409, "本次没有可审计的 delta 格，请先选择人工审计类型")
 		return
 	}
 	if strings.TrimSpace(run.SourcePath) == "" {
@@ -566,21 +636,43 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		writeErr(w, 500, "解析增量矩阵失败："+err.Error())
 		return
 	}
-	allowed := make(map[string]bool, len(run.DeltaCellKeys))
+	deltaAllowed := make(map[string]bool, len(run.DeltaCellKeys))
 	for _, key := range run.DeltaCellKeys {
 		if key = strings.TrimSpace(key); key != "" {
-			allowed[key] = true
+			deltaAllowed[key] = true
+		}
+	}
+	gapAllowed := make(map[string]bool)
+	for _, cell := range fullBody.Tasks {
+		label := strings.TrimSpace(cell.Endpoint.Method + " " + cell.Endpoint.URL)
+		for _, gap := range run.DeltaGaps {
+			if label == strings.TrimSpace(gap) {
+				gapAllowed[cell.CellKey] = true
+				break
+			}
+		}
+	}
+	for key := range manualRequested {
+		if !gapAllowed[key] {
+			writeErr(w, 409, "人工审计类型只能选择增量缺口接口的矩阵格")
+			return
 		}
 	}
 	body := fullBody
-	body.Tasks = make([]db.CellInput, 0, len(run.DeltaCellKeys))
+	body.Tasks = make([]db.CellInput, 0, len(deltaAllowed)+len(manualRequested))
 	for _, cell := range fullBody.Tasks {
-		if allowed[cell.CellKey] {
+		switch {
+		case deltaAllowed[cell.CellKey]:
+			body.Tasks = append(body.Tasks, cell)
+		case manualRequested[cell.CellKey]:
+			cell.Eligibility = "applicable"
+			cell.Hold = false
+			cell.Reason = "人工指定增量审计类型"
 			body.Tasks = append(body.Tasks, cell)
 		}
 	}
 	if len(body.Tasks) == 0 {
-		writeErr(w, 409, "delta 明细没有匹配到目标矩阵，请重新准备")
+		writeErr(w, 409, "本次没有匹配到可导入的目标矩阵格")
 		return
 	}
 	// Reject a second live run for the same project. Prepared runs are inert and
@@ -619,12 +711,6 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 	if baseTask == nil || strings.TrimSpace(baseTask.SourcePath) == "" {
 		writeErr(w, 409, "基线任务源码不存在，请重新准备")
 		return
-	}
-	var req struct {
-		AutoStart *bool `json:"auto_start"`
-	}
-	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&req)
 	}
 	autoStart := req.AutoStart == nil || *req.AutoStart
 	desc := fmt.Sprintf("增量审计 GitLab 项目 %s（%s @ %s，base %s）", p.Path, projectBranch(p), shortSHA(run.TargetCommit), shortSHA(run.BaseCommit))

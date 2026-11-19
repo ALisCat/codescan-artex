@@ -37,7 +37,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api } from "@/lib/api";
-import type { ChangeFile, ChangePreview, CodeProject, ProjectAuditRun } from "@/lib/types";
+import type { ChangeFile, ChangePreview, CodeProject, IncrementalGapCell, ProjectAuditRun } from "@/lib/types";
 
 function fmtTime(v?: string) {
   if (!v) return "—";
@@ -49,6 +49,41 @@ function fmtTime(v?: string) {
 
 function shortCommit(v: string) {
   return v ? v.slice(0, 12) : "—";
+}
+
+const VULN_LABELS: Record<string, string> = {
+  authz: "越权",
+  authn: "认证/回调",
+  "business-logic": "业务逻辑",
+  "business_logic": "业务逻辑",
+  "command-exec": "命令/表达式",
+  csrf: "CSRF",
+  deserialization: "反序列化",
+  "file-upload": "文件上传",
+  "ldap-injection": "LDAP",
+  "ldap_injection": "LDAP",
+  "mass-assignment": "批量赋值",
+  "mass_assignment": "批量赋值",
+  "open-redirect": "开放重定向",
+  "open_redirect": "开放重定向",
+  "path-traversal": "路径穿越",
+  "race-condition": "竞态",
+  "race_condition": "竞态",
+  "sql-injection": "SQL 注入",
+  "sql_injection": "SQL 注入",
+  ssrf: "SSRF",
+  ssti: "SSTI",
+  xss: "XSS",
+  xxe: "XXE",
+  secrets: "硬编码凭据",
+  crypto: "弱加密",
+  dependency: "依赖漏洞",
+  "sensitive-data": "敏感数据",
+  "sensitive_data": "敏感数据",
+};
+
+function vulnLabel(v: string) {
+  return VULN_LABELS[v] ?? v;
 }
 
 function changeStatusLabel(s: string) {
@@ -138,7 +173,8 @@ function DetailInner() {
   const [starting, setStarting] = React.useState(false);
   const [preparingIncremental, setPreparingIncremental] = React.useState(false);
   const [startingIncremental, setStartingIncremental] = React.useState(false);
-  const [startingReview, setStartingReview] = React.useState(false);
+  const [gapCells, setGapCells] = React.useState<IncrementalGapCell[]>([]);
+  const [manualSelections, setManualSelections] = React.useState<Record<string, string>>({});
   const [detailsOpen, setDetailsOpen] = React.useState(false);
   const [incrementalTab, setIncrementalTab] = React.useState<"unreviewed" | "reviewed">("unreviewed");
   const [reviewDialogOpen, setReviewDialogOpen] = React.useState(false);
@@ -306,7 +342,8 @@ function DetailInner() {
     if (!p || !preparedRun) return;
     setStartingIncremental(true);
     try {
-      const res = await api.startIncrementalAudit(p.id, preparedRun.id);
+      const manualCellKeys = Object.values(manualSelections).filter(Boolean);
+      const res = await api.startIncrementalAudit(p.id, preparedRun.id, manualCellKeys);
       setAudits((prev) => [res.audit, ...prev.filter((r) => r.id !== res.audit.id)]);
       toast.success("增量审计任务已创建");
       router.push(`/function/tasks/detail?id=${res.task_id}`);
@@ -314,21 +351,6 @@ function DetailInner() {
       toast.error("启动增量审计失败：" + (e as Error).message);
     } finally {
       setStartingIncremental(false);
-    }
-  }
-
-  async function startReviewTask() {
-    if (!p || !preparedRun) return;
-    setStartingReview(true);
-    try {
-      const res = await api.startIncrementalReview(p.id, preparedRun.id);
-      setAudits((prev) => [res.audit, ...prev.filter((r) => r.id !== res.audit.id)]);
-      toast.success("人工复核任务已创建");
-      router.push(`/function/tasks/detail?id=${res.task_id}`);
-    } catch (e) {
-      toast.error("创建人工复核任务失败：" + (e as Error).message);
-    } finally {
-      setStartingReview(false);
     }
   }
 
@@ -400,6 +422,29 @@ function DetailInner() {
   const activeBase = activeScope?.base_commit || (incrementalTab === "unreviewed" ? preview?.review_base_commit : preview?.base_commit);
   const activeTarget = activeScope?.target_commit || preview?.target_commit;
   const preparedRun = audits[0]?.status === "prepared" ? audits[0] : null;
+
+  React.useEffect(() => {
+    if (!p || !preparedRun || preparedRun.delta_gaps.length === 0) {
+      setGapCells([]);
+      setManualSelections({});
+      return;
+    }
+    let alive = true;
+    api
+      .projectGapCells(p.id, preparedRun.id)
+      .then((res) => {
+        if (alive) {
+          setGapCells(res.cells);
+          setManualSelections({});
+        }
+      })
+      .catch(() => {
+        if (alive) setGapCells([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [p, preparedRun]);
   const incrementalState = !p.last_audited_commit
     ? { label: "需要全量基线", tone: "warning" }
     : previewLoading
@@ -652,12 +697,50 @@ function DetailInner() {
                     {preparedRun.changed_files} 个变更文件 · 本次只审计 {preparedRun.delta_cells} 个矩阵格；未变更格从基线任务只读继承。
                   </div>
                   {(preparedRun.delta_gaps?.length ?? 0) > 0 && (
-                    <div className="text-xs text-amber-700 dark:text-amber-300">
-                      覆盖缺口：{preparedRun.delta_gaps.length} 个变更接口没有适用的矩阵格，需要人工确认或全量审计。
-                      <div className="mt-1 font-mono text-[11px]">
-                        {preparedRun.delta_gaps.slice(0, 5).join("、")}
-                        {preparedRun.delta_gaps.length > 5 ? " 等" : ""}
+                    <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs">
+                      <div className="font-medium text-amber-800 dark:text-amber-200">
+                        新增/变更接口当前矩阵未覆盖，可人工指定审计类型
                       </div>
+                      <div className="text-muted-foreground">
+                        这些接口在矩阵中全部为 N/A。选择类型后，点击「开始增量审计」会把对应矩阵格加入任务。
+                      </div>
+                      {gapCells.length === 0 ? (
+                        <div className="text-muted-foreground font-mono text-[11px]">
+                          {preparedRun.delta_gaps.join("、")}
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {Object.entries(
+                            gapCells.reduce<Record<string, { method: string; url: string; cells: IncrementalGapCell[] }>>((acc, cell) => {
+                              const key = `${cell.method} ${cell.url}`;
+                              if (!acc[key]) acc[key] = { method: cell.method, url: cell.url, cells: [] };
+                              acc[key].cells.push(cell);
+                              return acc;
+                            }, {}),
+                          ).map(([label, group]) => (
+                            <div key={label} className="flex flex-wrap items-center justify-between gap-2 rounded border bg-background/60 px-2 py-1.5">
+                              <span className="min-w-0 break-all font-mono text-[11px]">
+                                <span className="mr-1 font-sans text-muted-foreground">{group.method}</span>
+                                {group.url}
+                              </span>
+                              <select
+                                className="h-7 max-w-48 rounded border bg-background px-2 text-xs"
+                                value={manualSelections[label] ?? ""}
+                                onChange={(e) =>
+                                  setManualSelections((prev) => ({ ...prev, [label]: e.target.value }))
+                                }
+                              >
+                                <option value="">不指定</option>
+                                {group.cells.map((cell) => (
+                                  <option key={cell.cell_key} value={cell.cell_key}>
+                                    {vulnLabel(cell.vulnclass)}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                   {preparedRun.base_task_id && (
@@ -678,17 +761,16 @@ function DetailInner() {
                   <Button
                     size="sm"
                     onClick={startIncremental}
-                    disabled={startingIncremental || preparedRun.delta_cells <= 0}
+                    disabled={
+                      startingIncremental ||
+                      (preparedRun.delta_cells <= 0 && Object.values(manualSelections).every((v) => !v))
+                    }
                   >
                     {startingIncremental ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}
-                    {preparedRun.delta_cells > 0 ? "开始增量审计" : "没有 delta 格"}
+                    {preparedRun.delta_cells > 0 || Object.values(manualSelections).some(Boolean)
+                      ? "开始增量审计"
+                      : "请选择人工审计类型"}
                   </Button>
-                  {(preparedRun.delta_gaps?.length ?? 0) > 0 && (
-                    <Button size="sm" variant="outline" onClick={startReviewTask} disabled={startingReview}>
-                      {startingReview ? <Loader2Icon className="size-4 animate-spin" /> : <CheckCircle2Icon className="size-4" />}
-                      人工复核
-                    </Button>
-                  )}
                 </div>
               </div>
             </div>

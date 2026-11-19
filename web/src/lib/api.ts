@@ -82,6 +82,7 @@ import type {
   ChangePreview,
   ProjectAuditRun,
   TaskProjectAudit,
+  IncrementalGapCell,
   Severity,
   SkillCall,
   SkillItem,
@@ -1146,10 +1147,12 @@ export const api = {
   startProjectAudit: (id: number, mode: "full" | "incremental" = "full") =>
     post<{ audit: ProjectAuditRun; upload_id: string; state: string }>(`/projects/${id}/audit`, { mode }),
   prepareIncrementalAudit: (id: number) => post<ProjectAuditRun>(`/projects/${id}/incremental-prepare`),
-  startIncrementalAudit: (id: number, runID: number) =>
-    post<{ audit: ProjectAuditRun; task_id: number }>(`/projects/${id}/incremental-runs/${runID}/start`),
-  startIncrementalReview: (id: number, runID: number) =>
-    post<{ audit: ProjectAuditRun; task_id: number }>(`/projects/${id}/incremental-runs/${runID}/review-task`),
+  startIncrementalAudit: (id: number, runID: number, manualCellKeys: string[] = []) =>
+    post<{ audit: ProjectAuditRun; task_id: number }>(`/projects/${id}/incremental-runs/${runID}/start`, {
+      manual_cell_keys: manualCellKeys,
+    }),
+  projectGapCells: (id: number, runID: number) =>
+    get<{ cells: IncrementalGapCell[] }>(`/projects/${id}/incremental-runs/${runID}/gap-cells`),
   projectAudits: (id: number) =>
     get<{ audits: ProjectAuditRun[] | null }>(`/projects/${id}/audits`).then((r) => arr(r.audits)),
   projectAudit: (id: number, runID: number) => get<ProjectAuditRun>(`/projects/${id}/audits/${runID}`),

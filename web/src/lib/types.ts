@@ -1176,6 +1176,15 @@ export interface ChangePreview {
   error?: string;
 }
 
+export interface IncrementalGapCell {
+  cell_key: string;
+  method: string;
+  url: string;
+  vulnclass: string;
+  eligibility: string;
+  reason: string;
+}
+
 export interface TaskProjectAudit {
   audit: ProjectAuditRun;
   project: CodeProject;
