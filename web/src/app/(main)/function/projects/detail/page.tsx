@@ -8,11 +8,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeftIcon,
   CheckCircle2Icon,
+  ChevronDownIcon,
+  ChevronUpIcon,
   ExternalLinkIcon,
   FileCode2Icon,
   GitBranchIcon,
   GitCommitHorizontalIcon,
-  HistoryIcon,
   Loader2Icon,
   PlayIcon,
   RefreshCwIcon,
@@ -23,8 +24,17 @@ import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
 import type { ChangeFile, ChangePreview, CodeProject, ProjectAuditRun } from "@/lib/types";
 
@@ -126,6 +136,8 @@ function DetailInner() {
   const [checking, setChecking] = React.useState(false);
   const [starting, setStarting] = React.useState(false);
   const [preparingIncremental, setPreparingIncremental] = React.useState(false);
+  const [detailsOpen, setDetailsOpen] = React.useState(false);
+  const [reviewDialogOpen, setReviewDialogOpen] = React.useState(false);
   const [preview, setPreview] = React.useState<ChangePreview | null>(null);
   const [previewLoading, setPreviewLoading] = React.useState(false);
   const [previewError, setPreviewError] = React.useState("");
@@ -224,6 +236,7 @@ function DetailInner() {
       const next = await api.reviewProject(p.id, preview.target_commit, reviewNote.trim());
       setP(next);
       setReviewNote("");
+      setReviewDialogOpen(false);
       toast.success("已标记已阅；审计基线未改变");
       await loadPreview();
     } catch (e) {
@@ -316,6 +329,34 @@ function DetailInner() {
   const trackedBranch = p.tracked_branch || p.default_branch || "main";
   const latestAudit = audits[0];
   const auditBusy = starting || latestAudit?.status === "fetching";
+  const targetCommit = preview?.target_commit || p.last_seen_commit;
+  const reviewed = !!preview?.target_commit && p.last_reviewed_commit === preview.target_commit;
+  const targetHasChanges = !!p.last_audited_commit && !!p.last_seen_commit && p.last_seen_commit !== p.last_audited_commit;
+  const latestPrepared =
+    latestAudit?.status === "prepared" &&
+    (!preview || latestAudit.target_commit === preview.target_commit) &&
+    (!p.last_seen_commit || latestAudit.target_commit === p.last_seen_commit)
+      ? latestAudit
+      : null;
+  const incrementalState = !p.last_audited_commit
+    ? { label: "需要全量基线", tone: "warning" }
+    : previewLoading
+      ? { label: "检查中", tone: "muted" }
+      : preview?.no_changes || (!preview && !targetHasChanges)
+        ? { label: "无新提交", tone: "ok" }
+        : latestPrepared
+          ? { label: "增量已准备", tone: "ok" }
+          : preview
+            ? reviewed
+              ? { label: "已阅，未审计", tone: "warning" }
+              : { label: "待决定", tone: "warning" }
+            : { label: "有新提交", tone: "warning" };
+  const stateClass =
+    incrementalState.tone === "ok"
+      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+      : incrementalState.tone === "warning"
+        ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+        : "text-muted-foreground";
 
   return (
     <div className="flex flex-1 flex-col gap-4 md:gap-6">
@@ -458,25 +499,6 @@ function DetailInner() {
                 </Link>
               </Button>
             )}
-            <Button
-              className="w-full justify-start"
-              variant="outline"
-              onClick={prepareIncremental}
-              disabled={!hasAudit || !updateAvailable || preparingIncremental}
-              title={!hasAudit ? "先完成一次全量审计" : !updateAvailable ? "目标分支没有新提交" : "准备增量源码和 target 矩阵（不会创建任务）"}
-            >
-              {preparingIncremental ? <Loader2Icon className="size-4 animate-spin" /> : <HistoryIcon className="size-4" />}
-              准备增量源码
-            </Button>
-            <Button
-              className="w-full justify-start"
-              variant="outline"
-              disabled
-              title="下一步：delta cells 派发与 base findings 继承"
-            >
-              <PlayIcon className="size-4" />
-              发起增量审计
-            </Button>
             {latestAudit && (
               <div className="rounded-lg border p-2 text-xs">
                 <div className="text-muted-foreground flex items-center justify-between gap-2">
@@ -502,42 +524,29 @@ function DetailInner() {
       </div>
 
       <Card>
-        <CardHeader className="flex flex-row items-start justify-between gap-3">
-          <div className="space-y-1">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <FileCode2Icon className="size-4" />
-              增量分析
-            </CardTitle>
-            <CardDescription>
-              对比上次成功审计基线和目标分支 HEAD；预览只读取 GitLab compare，不下载完整源码、不创建任务。
-            </CardDescription>
+        <CardHeader className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <FileCode2Icon className="size-4" />
+                增量分析
+              </CardTitle>
+              <Badge variant="outline" className={stateClass}>
+                {incrementalState.label}
+              </Badge>
+            </div>
+            <div className="text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 text-xs">
+              <span>审计基线 <code className="font-mono text-foreground">{shortCommit(p.last_audited_commit)}</code></span>
+              <span>已阅 <code className="font-mono text-foreground">{shortCommit(p.last_reviewed_commit)}</code></span>
+              <span>目标 <code className="font-mono text-foreground">{shortCommit(targetCommit)}</code></span>
+            </div>
           </div>
-          <Button variant="outline" size="sm" onClick={loadPreview} disabled={previewLoading}>
+          <Button variant={preview ? "outline" : "default"} size="sm" onClick={loadPreview} disabled={previewLoading || !hasAudit}>
             {previewLoading ? <Loader2Icon className="size-4 animate-spin" /> : <RefreshCwIcon className="size-4" />}
-            预览变更
+            {preview ? "重新预览" : "查看变更"}
           </Button>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 text-sm sm:grid-cols-3">
-            <div className="rounded-lg border p-3">
-              <div className="text-muted-foreground text-xs">审计基线</div>
-              <div className="mt-1 font-mono text-sm">{shortCommit(p.last_audited_commit)}</div>
-              <div className="text-muted-foreground mt-1 text-xs">{p.last_audited_commit ? "上次成功审计" : "还没有成功基线"}</div>
-            </div>
-            <div className="rounded-lg border p-3">
-              <div className="text-muted-foreground text-xs">上次已阅基线</div>
-              <div className="mt-1 font-mono text-sm">{shortCommit(p.last_reviewed_commit)}</div>
-              <div className="text-muted-foreground mt-1 text-xs">
-                {p.last_reviewed_commit ? p.last_review_note || "已阅，暂未审计" : "尚未标记已阅"}
-              </div>
-            </div>
-            <div className="rounded-lg border p-3">
-              <div className="text-muted-foreground text-xs">目标分支 HEAD</div>
-              <div className="mt-1 font-mono text-sm">{shortCommit(preview?.target_commit || p.last_seen_commit)}</div>
-              <div className="text-muted-foreground mt-1 text-xs">{trackedBranch}</div>
-            </div>
-          </div>
-
           {previewError && (
             <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-700 dark:text-red-300">
               {previewError}
@@ -545,8 +554,13 @@ function DetailInner() {
           )}
 
           {!preview && !previewLoading && !previewError && (
-            <div className="text-muted-foreground text-sm">
-              点击“预览变更”查看文件、行数和候选接口，再决定是否发起增量审计。
+            <div className="text-muted-foreground flex items-center gap-2 text-sm">
+              <GitCommitHorizontalIcon className="size-4" />
+              {hasAudit
+                ? targetHasChanges
+                  ? "目标分支有新提交，点击「查看变更」确认影响范围。"
+                  : "当前目标分支与审计基线一致，没有新提交。"
+                : "还没有成功审计基线，请先完成一次全量审计。"}
             </div>
           )}
 
@@ -564,108 +578,163 @@ function DetailInner() {
 
           {preview && !preview.needs_full && !preview.no_changes && (
             <>
-              <div className="grid gap-3 text-sm sm:grid-cols-4">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <div className="rounded-lg border p-3">
-                  <div className="text-muted-foreground text-xs">自上次审计提交</div>
-                  <div className="mt-1 text-lg font-semibold">{preview.audit_gap.commits}</div>
+                  <div className="text-muted-foreground text-xs">提交</div>
+                  <div className="mt-1 text-2xl font-semibold tabular-nums">{preview.audit_gap.commits}</div>
                 </div>
                 <div className="rounded-lg border p-3">
-                  <div className="text-muted-foreground text-xs">自上次审计文件</div>
-                  <div className="mt-1 text-lg font-semibold">{preview.audit_gap.files_changed}</div>
+                  <div className="text-muted-foreground text-xs">文件</div>
+                  <div className="mt-1 text-2xl font-semibold tabular-nums">{preview.audit_gap.files_changed}</div>
                 </div>
                 <div className="rounded-lg border p-3">
                   <div className="text-muted-foreground text-xs">新增行</div>
-                  <div className="mt-1 text-lg font-semibold text-emerald-600 dark:text-emerald-400">+{preview.audit_gap.additions}</div>
+                  <div className="mt-1 text-2xl font-semibold text-emerald-600 tabular-nums dark:text-emerald-400">
+                    +{preview.audit_gap.additions}
+                  </div>
                 </div>
                 <div className="rounded-lg border p-3">
                   <div className="text-muted-foreground text-xs">删除行</div>
-                  <div className="mt-1 text-lg font-semibold text-red-600 dark:text-red-400">-{preview.audit_gap.deletions}</div>
+                  <div className="mt-1 text-2xl font-semibold text-red-600 tabular-nums dark:text-red-400">
+                    -{preview.audit_gap.deletions}
+                  </div>
                 </div>
               </div>
 
-              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
-                <div className="font-medium text-amber-800 dark:text-amber-200">审计缺口与已阅状态</div>
-                <div className="text-muted-foreground mt-1 text-xs leading-relaxed">
-                  自上次已阅：
-                  {preview.review_same_as_audit
-                    ? "尚未建立已阅基线，当前按审计缺口展示"
-                    : `${preview.review_summary.commits} 个提交 / ${preview.review_summary.files_changed} 个文件`}
-                  <br />
-                  自上次审计：{preview.audit_gap.commits} 个提交 / {preview.audit_gap.files_changed} 个文件。
-                  已阅不等于已审计；后续增量审计仍会从上次审计基线开始。
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                  审计缺口：{preview.audit_gap.commits} 个提交 / {preview.audit_gap.files_changed} 个文件
+                </Badge>
+                {reviewed && (
+                  <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+                    本次已标记已阅
+                  </Badge>
+                )}
+                {latestPrepared && (
+                  <Badge variant="outline" className="border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300">
+                    增量源码已准备
+                  </Badge>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-sm font-medium">这次变更怎么处理？</div>
+                  <div className="text-muted-foreground text-xs">
+                    审计会从上次审计基线开始；已阅不会跳过未审计代码。
+                  </div>
                 </div>
-                <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                  <Input
-                    value={reviewNote}
-                    onChange={(e) => setReviewNote(e.target.value)}
-                    placeholder="已阅说明（可选）：例如仅测试代码、暂缓审计"
-                    className="h-8 text-xs"
-                  />
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" onClick={prepareIncremental} disabled={preparingIncremental || !!latestPrepared}>
+                    {preparingIncremental ? <Loader2Icon className="size-4 animate-spin" /> : <ShieldCheckIcon className="size-4" />}
+                    {latestPrepared ? "增量已准备" : "准备增量审计"}
+                  </Button>
                   <Button
                     size="sm"
                     variant="outline"
-                    className="shrink-0"
-                    onClick={markReviewed}
-                    disabled={reviewing || p.last_reviewed_commit === preview.target_commit}
+                    onClick={() => setReviewDialogOpen(true)}
+                    disabled={reviewing || reviewed}
                   >
-                    {reviewing && <Loader2Icon className="size-4 animate-spin" />}
-                    {p.last_reviewed_commit === preview.target_commit ? "当前提交已标记已阅" : "本次不审计，标记已阅"}
+                    <CheckCircle2Icon className="size-4" />
+                    {reviewed ? "已标记已阅" : "本次无需审计"}
                   </Button>
                 </div>
               </div>
 
-              {preview.commits.length > 0 && (
-                <div className="space-y-2">
-                  <div className="text-sm font-medium">提交列表</div>
-                  <div className="space-y-1 rounded-lg border">
-                    {preview.commits.slice(0, 20).map((c) => (
-                      <div key={c.id} className="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs last:border-b-0">
-                        <span className="font-mono text-muted-foreground">{shortCommit(c.id || c.short_id || "")}</span>
-                        <span className="min-w-0 flex-1 truncate">{c.title}</span>
-                        <span className="text-muted-foreground">{c.author_name || ""}</span>
+              <Button variant="ghost" size="sm" className="-ml-2" onClick={() => setDetailsOpen((v) => !v)}>
+                {detailsOpen ? <ChevronUpIcon className="size-4" /> : <ChevronDownIcon className="size-4" />}
+                {detailsOpen ? "收起变更详情" : "查看文件、提交和接口详情"}
+              </Button>
+
+              {detailsOpen && (
+                <div className="space-y-4 border-t pt-4">
+                  {preview.commits.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">提交列表</div>
+                      <div className="space-y-1 rounded-lg border">
+                        {preview.commits.slice(0, 20).map((c) => (
+                          <div key={c.id} className="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs last:border-b-0">
+                            <span className="text-muted-foreground font-mono">{shortCommit(c.id || c.short_id || "")}</span>
+                            <span className="min-w-0 flex-1 truncate">{c.title}</span>
+                            <span className="text-muted-foreground">{c.author_name || ""}</span>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                    </div>
+                  )}
 
-              <div className="space-y-2">
-                <div className="text-sm font-medium">变更文件（点击展开 diff）</div>
-                {preview.files.length === 0 ? (
-                  <div className="text-muted-foreground text-sm">没有文件变更。</div>
-                ) : (
                   <div className="space-y-2">
-                    {preview.files.map((f) => (
-                      <ChangeFileRow key={`${f.old_path}:${f.new_path}`} file={f} />
-                    ))}
+                    <div className="text-sm font-medium">变更文件（点击展开 diff）</div>
+                    {preview.files.length === 0 ? (
+                      <div className="text-muted-foreground text-sm">没有文件变更。</div>
+                    ) : (
+                      <div className="space-y-2">
+                        {preview.files.map((f) => (
+                          <ChangeFileRow key={`${f.old_path}:${f.new_path}`} file={f} />
+                        ))}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
 
-              {preview.endpoints.length > 0 && (
-                <div className="space-y-2">
-                  <div className="text-sm font-medium">直接受影响接口</div>
-                  <div className="flex flex-wrap gap-2">
-                    {preview.endpoints.map((ep, i) => (
-                      <Badge key={`${ep.method}:${ep.path}:${i}`} variant="outline" className="font-mono">
-                        {ep.method} {ep.path}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
+                  {preview.endpoints.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">直接受影响接口</div>
+                      <div className="flex flex-wrap gap-2">
+                        {preview.endpoints.map((ep, i) => (
+                          <Badge key={`${ep.method}:${ep.path}:${i}`} variant="outline" className="font-mono">
+                            {ep.method} {ep.path}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
-              {preview.warnings.length > 0 && (
-                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-700 dark:text-amber-300">
-                  {preview.warnings.map((w, i) => (
-                    <div key={i}>{w}</div>
-                  ))}
+                  {preview.warnings.length > 0 && (
+                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-700 dark:text-amber-300">
+                      {preview.warnings.map((w, i) => (
+                        <div key={i}>{w}</div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </>
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={reviewDialogOpen} onOpenChange={setReviewDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>本次不审计？</DialogTitle>
+            <DialogDescription>
+              只把这次变更标记为已阅，不改变审计基线，也不会产生 finding。后续真正审计时仍会覆盖这段代码。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="review-note">已阅说明（可选）</Label>
+            <Input
+              id="review-note"
+              value={reviewNote}
+              onChange={(e) => setReviewNote(e.target.value)}
+              placeholder="例如：仅测试代码、暂缓审计"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !reviewing) void markReviewed();
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReviewDialogOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={() => void markReviewed()} disabled={reviewing}>
+              {reviewing && <Loader2Icon className="size-4 animate-spin" />}
+              确认已阅
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
 
 
     </div>
