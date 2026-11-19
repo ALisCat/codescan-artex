@@ -605,6 +605,11 @@ function DetailInner() {
                 <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
                   审计缺口：{preview.audit_gap.commits} 个提交 / {preview.audit_gap.files_changed} 个文件
                 </Badge>
+                {!preview.review_same_as_audit && !reviewed && (
+                  <span className="text-muted-foreground text-xs">
+                    自上次已阅：{preview.review_summary.commits} 个提交 / {preview.review_summary.files_changed} 个文件
+                  </span>
+                )}
                 {reviewed && (
                   <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
                     本次已标记已阅
