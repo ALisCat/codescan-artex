@@ -2191,7 +2191,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 
 	// Related-task findings are a live, read-only view. Provenance metadata lets
 	// the task UI suppress mutation affordances while retaining stable ids.
-	sources, err := t.Store.DirectSourceStores()
+	sources, err := s.collectSourceStores(t)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -2222,6 +2222,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 			s.resolveAssetIDs(sourceAssetIDs),
 		)...)
 	}
+	out = dedupeFindings(out)
 	writeJSON(w, 200, out)
 }
 
@@ -2308,7 +2309,7 @@ func (s *Server) getFinding(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 404, "context task not found")
 			return
 		}
-		sourceTaskID, inherited, allowed := findingProvenanceInTask(contextTask, f.TaskID)
+		sourceTaskID, inherited, allowed := s.findingProvenanceInTaskDeep(contextTask, f.TaskID)
 		if !allowed {
 			writeErr(w, 404, "finding not available in task context")
 			return
@@ -2424,6 +2425,89 @@ func (s *Server) findingsExport(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeErr(w, 400, "bad format: "+format)
 	}
+}
+
+// collectSourceStores expands the direct source task chain breadth-first. The
+// existing DirectSourceStores intentionally stops at one level; incremental
+// audit chains need older ancestors so findings from the full baseline are not
+// lost after a second or third incremental run.
+func (s *Server) collectSourceStores(root *Task) ([]db.DirectSourceStore, error) {
+	if root == nil || root.Store == nil {
+		return nil, nil
+	}
+	seen := map[int64]bool{}
+	if rootID, err := strconv.ParseInt(root.ID, 10, 64); err == nil {
+		seen[rootID] = true
+	}
+	queue := []*db.ExplorationStore{root.Store}
+	out := []db.DirectSourceStore{}
+	for len(queue) > 0 {
+		store := queue[0]
+		queue = queue[1:]
+		sources, err := store.DirectSourceStores()
+		if err != nil {
+			return nil, err
+		}
+		for _, source := range sources {
+			if seen[source.Task.TaskID] {
+				continue
+			}
+			seen[source.Task.TaskID] = true
+			out = append(out, source)
+			queue = append(queue, source.Store)
+		}
+	}
+	return out, nil
+}
+
+func (s *Server) findingProvenanceInTaskDeep(contextTask *Task, findingTaskID *int64) (sourceTaskID string, inherited, allowed bool) {
+	if contextTask == nil || findingTaskID == nil {
+		return "", false, false
+	}
+	contextID, err := strconv.ParseInt(contextTask.ID, 10, 64)
+	if err != nil {
+		return "", false, false
+	}
+	if *findingTaskID == contextID {
+		return "", false, true
+	}
+	sources, err := s.collectSourceStores(contextTask)
+	if err != nil {
+		return "", false, false
+	}
+	for _, source := range sources {
+		if source.Task.TaskID == *findingTaskID {
+			return i64s(source.Task.TaskID), true, true
+		}
+	}
+	return "", false, false
+}
+
+// dedupeFindings keeps the first (local/newest) finding for the same effective
+// root. Interface + vulnclass is used when available; otherwise normalized name
+// or summary is used. This is deliberately conservative and only for task-view
+// merged findings, not for the global finding table.
+func dedupeFindings(in []FindingDTO) []FindingDTO {
+	seen := map[string]bool{}
+	out := make([]FindingDTO, 0, len(in))
+	for _, f := range in {
+		var key string
+		if f.Interface != "" {
+			key = strings.ToLower(strings.TrimSpace(f.VulnClass)) + "|" + strings.ToLower(strings.TrimSpace(f.Interface))
+		} else {
+			label := strings.TrimSpace(f.Name)
+			if label == "" {
+				label = strings.TrimSpace(f.Summary)
+			}
+			key = strings.ToLower(strings.TrimSpace(f.VulnClass)) + "|" + strings.ToLower(label)
+		}
+		if key == "|" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, f)
+	}
+	return out
 }
 
 func findingProvenanceInTask(contextTask *Task, findingTaskID *int64) (sourceTaskID string, inherited, allowed bool) {
