@@ -1198,6 +1198,7 @@ export interface TaskProjectAudit {
 
 export interface ProjectAuditRun {
   id: number;
+  batch_no: number;
   project_id: number;
   mode: "full" | "incremental" | "manual_review";
   base_commit: string;

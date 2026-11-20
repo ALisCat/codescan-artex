@@ -8,6 +8,7 @@ import (
 
 type ProjectAuditRun struct {
 	ID                    int64      `json:"id"`
+	BatchNo               int        `json:"batch_no"` // 1-based sequence within the project
 	ProjectID             int64      `json:"project_id"`
 	Mode                  string     `json:"mode"`
 	BaseCommit            string     `json:"base_commit"`
@@ -146,7 +147,20 @@ func (s *CodeProjectStore) GetAudit(id int64) (*ProjectAuditRun, error) {
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
+	if err == nil {
+		err = s.fillBatchNo(r)
+	}
 	return r, err
+}
+
+// fillBatchNo computes the 1-based audit-batch ordinal within the project.
+// The database id stays globally unique for URLs/API calls; only the human-facing
+// batch label is project-scoped.
+func (s *CodeProjectStore) fillBatchNo(r *ProjectAuditRun) error {
+	if r == nil || r.ID <= 0 || r.ProjectID <= 0 {
+		return nil
+	}
+	return s.db.QueryRow(`SELECT count(*) FROM project_audit_runs WHERE project_id=$1 AND id <= $2`, r.ProjectID, r.ID).Scan(&r.BatchNo)
 }
 
 func (s *CodeProjectStore) ListAudits(projectID int64, limit int) ([]ProjectAuditRun, error) {
@@ -166,7 +180,17 @@ func (s *CodeProjectStore) ListAudits(projectID int64, limit int) ([]ProjectAudi
 		}
 		out = append(out, *r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var total int
+	if err := s.db.QueryRow(`SELECT count(*) FROM project_audit_runs WHERE project_id=$1`, projectID).Scan(&total); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].BatchNo = total - i
+	}
+	return out, nil
 }
 
 // ListPendingAuditRuns returns runs whose task has been created but whose audit
@@ -210,6 +234,9 @@ func (s *CodeProjectStore) GetAuditByTaskID(taskID int64) (*ProjectAuditRun, err
 	r, err := scanProjectAudit(s.db.QueryRow(`SELECT `+projectAuditCols+` FROM project_audit_runs WHERE task_id=$1 ORDER BY id DESC LIMIT 1`, taskID))
 	if err == sql.ErrNoRows {
 		return nil, nil
+	}
+	if err == nil {
+		err = s.fillBatchNo(r)
 	}
 	return r, err
 }

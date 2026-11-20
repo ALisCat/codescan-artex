@@ -612,7 +612,7 @@ function DetailInner() {
             <div className="min-w-0">
               <div className="font-medium text-sky-800 dark:text-sky-200">全量审计已发起</div>
               <div className="text-muted-foreground mt-0.5 text-xs">
-                审计批次 #{latestAudit.id} ·
+                审计批次 #{latestAudit.batch_no ?? latestAudit.id} ·
                 {latestAudit.status === "fetching"
                   ? " 正在下载源码"
                   : latestAudit.status === "preparing"
@@ -776,7 +776,7 @@ function DetailInner() {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium">增量审计已准备</span>
                   <Badge variant="outline" className="border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300">
-                    审计批次 #{preparedRun.id}
+                    审计批次 #{preparedRun.batch_no ?? preparedRun.id}
                   </Badge>
                 </div>
                 <Button
@@ -1251,7 +1251,7 @@ function DetailInner() {
               {latestAudit && (
                 <div className="text-muted-foreground mt-3 rounded-md border px-2 py-1.5 text-[11px]">
                   <div className="flex items-center justify-between gap-2">
-                    <span>最近审计批次 #{latestAudit.id}</span>
+                    <span>最近审计批次 #{latestAudit.batch_no ?? latestAudit.id}</span>
                     <Badge variant="outline">{latestAudit.status}</Badge>
                   </div>
                   <div className="mt-1 font-mono">target {shortCommit(latestAudit.target_commit)}</div>
@@ -1295,7 +1295,7 @@ function DetailInner() {
                         <div className="min-w-0 flex-1 rounded-lg border px-3 py-2">
                           <div className="flex flex-wrap items-center gap-2 text-xs">
                             <Badge variant="outline">{label}</Badge>
-                            <span className="font-medium">审计批次 #{run.id}</span>
+                            <span className="font-medium">审计批次 #{run.batch_no ?? run.id}</span>
                             <span className="text-muted-foreground font-mono">
                               {shortCommit(run.base_commit)} → {shortCommit(run.target_commit)}
                             </span>
