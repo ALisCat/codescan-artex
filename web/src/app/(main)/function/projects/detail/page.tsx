@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api } from "@/lib/api";
 import type {
@@ -186,6 +187,7 @@ function DetailInner() {
   const [newApplicableCells, setNewApplicableCells] = React.useState<IncrementalGapCell[]>([]);
   const [selectedNewKeys, setSelectedNewKeys] = React.useState<Set<string>>(new Set());
   const [detailsOpen, setDetailsOpen] = React.useState(false);
+  const [runsOpen, setRunsOpen] = React.useState(false);
   const [incrementalTab, setIncrementalTab] = React.useState<"unreviewed" | "reviewed">("unreviewed");
   const [reviewDialogOpen, setReviewDialogOpen] = React.useState(false);
   const [preview, setPreview] = React.useState<ChangePreview | null>(null);
@@ -587,6 +589,10 @@ function DetailInner() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={() => setRunsOpen(true)}>
+            <GitCommitHorizontalIcon className="size-4" />
+            审计运行链
+          </Button>
           <Button variant="outline" onClick={check} disabled={checking}>
             {checking ? <Loader2Icon className="size-4 animate-spin" /> : <RefreshCwIcon className="size-4" />}
             检查更新
@@ -640,8 +646,8 @@ function DetailInner() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
+      <div className="grid gap-4">
+        <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <GitCommitHorizontalIcon className="size-4" />
@@ -692,135 +698,7 @@ function DetailInner() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <ShieldCheckIcon className="size-4" />
-              审计运行
-            </CardTitle>
-            <CardDescription>全量建立基线，增量只审计变更影响面。</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <Button className="w-full justify-start" onClick={startFullAudit} disabled={auditBusy}>
-              {auditBusy ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}
-              {latestAudit?.status === "fetching" ? "正在准备源码…" : "发起全量审计"}
-            </Button>
-            {latestAudit?.task_id && ["ready", "review", "running"].includes(latestAudit.status) && (
-              <Button className="w-full justify-start" variant="outline" asChild>
-                <Link href={`/function/tasks/detail?id=${latestAudit.task_id}`}>
-                  <CheckCircle2Icon className="size-4" />
-                  {latestAudit.mode === "manual_review" ? "打开人工复核任务" : "查看最近审计任务"}
-                </Link>
-              </Button>
-            )}
-            {latestAudit && (
-              <div className="rounded-lg border p-2 text-xs">
-                <div className="text-muted-foreground flex items-center justify-between gap-2">
-                  <span>最近运行 #{latestAudit.id}</span>
-                  <Badge variant="outline">{latestAudit.status}</Badge>
-                </div>
-                <div className="mt-1 font-mono">target {shortCommit(latestAudit.target_commit)}</div>
-                {latestAudit.mode === "manual_review" && (
-                  <div className="text-muted-foreground mt-1">
-                    人工复核 · 不推进审计基线
-                  </div>
-                )}
-                {latestAudit.status === "prepared" && (
-                  <div className="mt-1">
-                    变更文件 {latestAudit.changed_files} · delta 格 {latestAudit.delta_cells}
-                  </div>
-                )}
-                {latestAudit.error_message && (
-                  <div className="mt-1 text-red-600 dark:text-red-400">{latestAudit.error_message}</div>
-                )}
-              </div>
-            )}
-            <p className="text-muted-foreground text-xs leading-relaxed">
-              全量审计会下载当前分支（{trackedBranch}）commit 的源码、创建任务并自动开跑；固定 commit 便于回溯。
-            </p>
-          </CardContent>
-        </Card>
       </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <GitCommitHorizontalIcon className="size-4" />
-            审计运行链
-          </CardTitle>
-          <CardDescription>全量建立基线，增量审计沿任务链向后推进；历史 target 不会被改写。</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {runChain.length === 0 ? (
-            <div className="text-muted-foreground text-sm">还没有审计运行记录。</div>
-          ) : (
-            <div className="space-y-0">
-              {runChain.map((run, index) => {
-                const isCurrentBaseline = p.last_audited_run_id === run.id && p.last_audited_commit === run.target_commit;
-                const isLatest = latestAudit?.id === run.id;
-                const label = run.mode === "full" ? "全量" : run.mode === "manual_review" ? "人工复核" : "增量";
-                return (
-                  <div key={run.id} className="relative flex gap-3 pb-4 last:pb-0">
-                    <div className="relative flex w-4 shrink-0 justify-center">
-                      {index < runChain.length - 1 && <span className="bg-border absolute top-4 bottom-0 w-px" />}
-                      <span
-                        className={
-                          isCurrentBaseline
-                            ? "relative z-10 mt-1 size-2.5 rounded-full bg-emerald-500 ring-4 ring-emerald-500/15"
-                            : isLatest
-                              ? "relative z-10 mt-1 size-2.5 rounded-full bg-sky-500 ring-4 ring-sky-500/15"
-                              : "bg-muted-foreground/40 relative z-10 mt-1 size-2.5 rounded-full ring-4 ring-muted"
-                        }
-                      />
-                    </div>
-                    <div className="min-w-0 flex-1 rounded-lg border px-3 py-2">
-                      <div className="flex flex-wrap items-center gap-2 text-xs">
-                        <Badge variant="outline">{label}</Badge>
-                        <span className="font-medium">运行 #{run.id}</span>
-                        <span className="text-muted-foreground font-mono">
-                          {shortCommit(run.base_commit)} → {shortCommit(run.target_commit)}
-                        </span>
-                        <Badge variant="outline">{run.status}</Badge>
-                        {isCurrentBaseline && (
-                          <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
-                            当前基线
-                          </Badge>
-                        )}
-                        {isLatest && !isCurrentBaseline && (
-                          <Badge variant="outline" className="border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300">
-                            最近运行
-                          </Badge>
-                        )}
-                        {run.task_id && (
-                          <Link
-                            href={`/function/tasks/detail?id=${run.task_id}`}
-                            className="text-foreground inline-flex items-center gap-0.5 underline underline-offset-2"
-                          >
-                            任务 #{run.task_id}
-                          </Link>
-                        )}
-                      </div>
-                      <div className="text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
-                        {run.mode === "incremental" && (
-                          <>
-                            <span>变更文件 {run.changed_files}</span>
-                            <span>自动 delta {run.delta_cells}</span>
-                            {(run.delta_gaps?.length ?? 0) > 0 && <span>未覆盖接口 {run.delta_gaps.length}</span>}
-                          </>
-                        )}
-                        {run.mode === "manual_review" && <span>不推进审计基线</span>}
-                        {run.mode === "full" && <span>建立完整矩阵基线</span>}
-                        <span>创建于 {fmtTime(run.created_at)}</span>
-                      </div>
-                      {run.error_message && <div className="mt-1 text-[11px] text-red-600 dark:text-red-400">{run.error_message}</div>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader className="flex flex-wrap items-start justify-between gap-3">
@@ -1291,6 +1169,134 @@ function DetailInner() {
           )}
         </CardContent>
       </Card>
+
+      <Sheet open={runsOpen} onOpenChange={setRunsOpen}>
+        <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 data-[side=right]:sm:max-w-lg">
+          <SheetHeader className="border-b px-4 py-3">
+            <SheetTitle className="flex items-center gap-2">
+              <GitCommitHorizontalIcon className="size-4" />
+              审计运行链
+            </SheetTitle>
+            <SheetDescription>
+              全量建立基线，增量审计沿任务链向后推进；历史 target 不会被改写。
+            </SheetDescription>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+            <div className="rounded-lg border p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-sm font-medium">发起全量审计</div>
+                  <div className="text-muted-foreground mt-0.5 text-xs">
+                    下载当前分支 {trackedBranch} 的源码并建立完整矩阵基线。
+                  </div>
+                </div>
+                <Button size="sm" onClick={startFullAudit} disabled={auditBusy}>
+                  {auditBusy ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}
+                  {latestAudit?.status === "fetching" ? "正在准备源码…" : "发起全量审计"}
+                </Button>
+              </div>
+              {latestAudit?.task_id && ["ready", "review", "running"].includes(latestAudit.status) && (
+                <Button className="mt-3 w-full justify-start" variant="outline" asChild>
+                  <Link href={`/function/tasks/detail?id=${latestAudit.task_id}`}>
+                    <CheckCircle2Icon className="size-4" />
+                    {latestAudit.mode === "manual_review" ? "打开人工复核任务" : "查看最近审计任务"}
+                  </Link>
+                </Button>
+              )}
+              {latestAudit && (
+                <div className="text-muted-foreground mt-3 rounded-md border px-2 py-1.5 text-[11px]">
+                  <div className="flex items-center justify-between gap-2">
+                    <span>最近运行 #{latestAudit.id}</span>
+                    <Badge variant="outline">{latestAudit.status}</Badge>
+                  </div>
+                  <div className="mt-1 font-mono">target {shortCommit(latestAudit.target_commit)}</div>
+                  {latestAudit.mode === "manual_review" && <div className="mt-1">人工复核 · 不推进审计基线</div>}
+                  {latestAudit.status === "prepared" && (
+                    <div className="mt-1">
+                      变更文件 {latestAudit.changed_files} · delta 格 {latestAudit.delta_cells}
+                    </div>
+                  )}
+                  {latestAudit.error_message && (
+                    <div className="mt-1 text-red-600 dark:text-red-400">{latestAudit.error_message}</div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <div className="mb-2 text-sm font-medium">运行记录</div>
+              {runChain.length === 0 ? (
+                <div className="text-muted-foreground text-sm">还没有审计运行记录。</div>
+              ) : (
+                <div className="space-y-0">
+                  {runChain.map((run, index) => {
+                    const isCurrentBaseline = p.last_audited_run_id === run.id && p.last_audited_commit === run.target_commit;
+                    const isLatest = latestAudit?.id === run.id;
+                    const label = run.mode === "full" ? "全量" : run.mode === "manual_review" ? "人工复核" : "增量";
+                    return (
+                      <div key={run.id} className="relative flex gap-3 pb-4 last:pb-0">
+                        <div className="relative flex w-4 shrink-0 justify-center">
+                          {index < runChain.length - 1 && <span className="bg-border absolute top-4 bottom-0 w-px" />}
+                          <span
+                            className={
+                              isCurrentBaseline
+                                ? "relative z-10 mt-1 size-2.5 rounded-full bg-emerald-500 ring-4 ring-emerald-500/15"
+                                : isLatest
+                                  ? "relative z-10 mt-1 size-2.5 rounded-full bg-sky-500 ring-4 ring-sky-500/15"
+                                  : "bg-muted-foreground/40 relative z-10 mt-1 size-2.5 rounded-full ring-4 ring-muted"
+                            }
+                          />
+                        </div>
+                        <div className="min-w-0 flex-1 rounded-lg border px-3 py-2">
+                          <div className="flex flex-wrap items-center gap-2 text-xs">
+                            <Badge variant="outline">{label}</Badge>
+                            <span className="font-medium">运行 #{run.id}</span>
+                            <span className="text-muted-foreground font-mono">
+                              {shortCommit(run.base_commit)} → {shortCommit(run.target_commit)}
+                            </span>
+                            <Badge variant="outline">{run.status}</Badge>
+                            {isCurrentBaseline && (
+                              <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+                                当前基线
+                              </Badge>
+                            )}
+                            {isLatest && !isCurrentBaseline && (
+                              <Badge variant="outline" className="border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300">
+                                最近运行
+                              </Badge>
+                            )}
+                            {run.task_id && (
+                              <Link
+                                href={`/function/tasks/detail?id=${run.task_id}`}
+                                className="text-foreground inline-flex items-center gap-0.5 underline underline-offset-2"
+                              >
+                                任务 #{run.task_id}
+                              </Link>
+                            )}
+                          </div>
+                          <div className="text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
+                            {run.mode === "incremental" && (
+                              <>
+                                <span>变更文件 {run.changed_files}</span>
+                                <span>自动 delta {run.delta_cells}</span>
+                                {(run.delta_gaps?.length ?? 0) > 0 && <span>未覆盖接口 {run.delta_gaps.length}</span>}
+                              </>
+                            )}
+                            {run.mode === "manual_review" && <span>不推进审计基线</span>}
+                            {run.mode === "full" && <span>建立完整矩阵基线</span>}
+                            <span>创建于 {fmtTime(run.created_at)}</span>
+                          </div>
+                          {run.error_message && <div className="mt-1 text-[11px] text-red-600 dark:text-red-400">{run.error_message}</div>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <Dialog open={reviewDialogOpen} onOpenChange={setReviewDialogOpen}>
         <DialogContent className="sm:max-w-md">
