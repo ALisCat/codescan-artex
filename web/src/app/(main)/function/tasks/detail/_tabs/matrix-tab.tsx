@@ -152,12 +152,38 @@ const STATUS_META: Record<string, StatusMeta> = {
 const LEGEND = ["pending", "dispatched", "confirmed", "clean", "needs_more", "hold", "hold_low", "unverified", "failed", "na"];
 
 const ORIGIN_LABEL: Record<string, string> = {
-  inherited: "基线继承",
-  delta: "本次变更",
-  manual: "人工指定",
-  new: "矩阵新增",
+  inherited: "继承",
+  delta: "本次",
+  manual: "人工",
+  new: "新增",
   removed: "已移除",
 };
+
+const ORIGIN_CLASS: Record<string, string> = {
+  inherited: "border-slate-400/40 bg-slate-500/10 text-slate-600 dark:text-slate-300",
+  delta: "border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300",
+  manual: "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+  new: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  removed: "border-red-500/30 bg-red-500/5 text-red-600 dark:text-red-300",
+};
+
+function OriginBadges({ origins }: { origins: Record<string, number> }) {
+  const keys = Object.keys(origins).filter((k) => k && k !== "matrix" && origins[k] > 0);
+  if (keys.length === 0) return null;
+  return (
+    <span className="flex shrink-0 items-center gap-0.5">
+      {keys.slice(0, 3).map((key) => (
+        <span
+          key={key}
+          className={cn("rounded border px-1 py-0 text-[9px] leading-4", ORIGIN_CLASS[key] ?? "border-border")}
+          title={`${ORIGIN_LABEL[key] ?? key}：${origins[key]} 格`}
+        >
+          {ORIGIN_LABEL[key] ?? key}
+        </span>
+      ))}
+    </span>
+  );
+}
 
 const STATUS_RANK: Record<string, number> = {
   confirmed: 8,
@@ -177,6 +203,7 @@ type RowData = {
   url: string;
   cells: Map<string, CaCell>;
   counts: Record<string, number>;
+  origins: Record<string, number>;
   guard: number;
   low: number;
   weight: number;
@@ -382,11 +409,13 @@ export function MatrixTab({ taskId }: { taskId: string }) {
       const key = `${c.method} ${c.endpoint_url}`;
       let r = m.get(key);
       if (!r) {
-        r = { key, method: c.method, url: c.endpoint_url, cells: new Map(), counts: {}, guard: 0, low: 0, weight: 0 };
+        r = { key, method: c.method, url: c.endpoint_url, cells: new Map(), counts: {}, origins: {}, guard: 0, low: 0, weight: 0 };
         m.set(key, r);
       }
       r.cells.set(c.vulnclass, c);
       r.counts[c.status] = (r.counts[c.status] ?? 0) + 1;
+      const origin = c.origin || "matrix";
+      r.origins[origin] = (r.origins[origin] ?? 0) + 1;
       if (c.status === "hold") {
         if ((c.reason ?? "").includes("低置信")) r.low += 1;
         else r.guard += 1;
@@ -687,6 +716,7 @@ export function MatrixTab({ taskId }: { taskId: string }) {
                           {r.method}
                         </Badge>
                         <span className="truncate font-mono text-[11px]">{r.url}</span>
+                        <OriginBadges origins={r.origins} />
                       </button>
                       {tableVulns.map((v) => {
                         const c = r.cells.get(v.key);
@@ -859,6 +889,7 @@ function SummaryRow({
           {r.method}
         </Badge>
         <span className="truncate font-mono text-[11px]">{r.url}</span>
+        <OriginBadges origins={r.origins} />
       </button>
       <span className={cn("text-center text-[11px] font-semibold", bucket.cls)}>{bucket.label}</span>
       <span className="flex justify-center">
