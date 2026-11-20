@@ -50,6 +50,11 @@ type Server struct {
 	importJobs sync.Map // uploadID -> *githubImportJob
 	matrixJobs sync.Map // taskID -> struct{}，local upload matrix preparation
 
+	// cellSeedMu serializes matrix cell -> intent seeding. The engine, HTTP
+	// handlers and report_observation can all call seedCellIntents at once;
+	// without this, one pending cell can be claimed by two intents.
+	cellSeedMu sync.Mutex
+
 	skillDir string // root directory for skill subdirectories
 	jwtKey   []byte // HS256 signing key loaded from / generated into dataDir/jwt.key
 

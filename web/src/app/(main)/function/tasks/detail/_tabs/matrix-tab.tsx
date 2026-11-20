@@ -157,6 +157,7 @@ const ORIGIN_LABEL: Record<string, string> = {
   manual: "人工",
   new: "新增",
   removed: "已移除",
+  observation: "观察",
 };
 
 const ORIGIN_CLASS: Record<string, string> = {
@@ -165,6 +166,7 @@ const ORIGIN_CLASS: Record<string, string> = {
   manual: "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300",
   new: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
   removed: "border-red-500/30 bg-red-500/5 text-red-600 dark:text-red-300",
+  observation: "border-teal-500/40 bg-teal-500/10 text-teal-700 dark:text-teal-300",
 };
 
 function OriginBadges({ origins }: { origins: Record<string, number> }) {

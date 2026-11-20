@@ -887,7 +887,7 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		fmt.Sprintf("矩阵快照：inherited=%d new=%d removed=%d", inheritedCount, newCount, removedCount),
 		fmt.Sprintf("基线任务：#%d", *run.BaseTaskID),
 		"未覆盖接口：" + previewList(run.DeltaGaps, 16),
-		"规则：只审计 delta/manual 格；inherited 只读，不重新审计；补派 add_intent 必须提供 summary + cell_keys 或 targets，禁止 new_string/old_string 参数。",
+		"规则：只审计 delta/manual 格，以及 worker 通过 report_observation 新增的 observation 格；inherited 只读，不重新审计；observation 格属于本次授权范围，不得以“只审计 delta/manual”为由压制；补派 add_intent 必须提供 summary + cell_keys 或 targets，禁止 new_string/old_string 参数。",
 	}
 	desc := fmt.Sprintf("增量审计 GitLab 项目 %s（%s @ %s，base %s）", p.Path, projectBranch(p), shortSHA(run.TargetCommit), shortSHA(run.BaseCommit))
 	goal := "只审计本次增量矩阵格（变更文件影响的接口与漏洞类型）；未变更矩阵格的结论从基线任务只读继承，不重新审计、不发请求、不编译业务源码。\n\n" + strings.Join(contract, "\n")

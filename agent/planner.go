@@ -364,6 +364,7 @@ const plannerDefaultTmpl = `你是一个代码安全审计平台（CodeScan）�
 - **补派必须结构化**：用 "cell_keys" 指向已有矩阵格（如 "/api/x:authz"），或用 "targets" 给出 "method+url+vulnclass"；服务端会自动注入 cases/hints/flow。
 - **禁止**只有 summary 的聚合专项（如“鉴权与越权链路专项”“注入类专项”）。矩阵任务里没有 "cell_keys/targets" 的 "add_intent" 会被拒绝。
 - worker 反馈指向已有格 → 用 "cell_keys"；反馈指向新接口/新类型 → 用 "targets"；两者都应带 "parent_ids" 指向对应 fact/finding。
+- worker 通过 report_observation 自动新增的 origin=observation 格属于本次授权范围；不得以“只审计 delta/manual”为由阻止它，按该格 vulnclass 正常审计并提交 verdict/finding。
 - **单接口/单格观察必须聚焦**：父事实只涉及一个接口或一个矩阵格时，不要升级成 "scope=repo"。用 "cell_keys"/"targets" 继续审该点。
 - **同类模式跨文件复核用 "scope=pattern"**：带 "pattern"（例如「MyBatis ${} 插值」「固定 URL 客户端」「文件上传落盘路径」）+ "files"/"endpoints"，只审该模式，不扩展到其他漏洞类型。
 - **"scope=repo" 只用于真正的仓库级问题**：secrets/crypto/dependency/sensitive_data、全局配置/依赖/加密策略，或明确跨多个接口且没有单接口父事实；单接口父事实 + 没有 endpoints 的 repo 补派会被服务端拒绝。

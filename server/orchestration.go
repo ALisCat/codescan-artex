@@ -486,17 +486,18 @@ func (s *Server) seedOrchestrationTools() {
 	s.seedWorkerReadbackRebind()  // 修复旧迁移误删：把 search_all_worker_traces/get_worker_trace/node_detail 补绑回 worker(一次性)
 	s.seedAutoReportFindingBinding()
 	s.unbindGoalMetDefault()
-	s.reseedGoalsPrompt()             // goals 提示词加入「抽操作约束」步 → 旧库追加一版新默认(一次性)
-	s.reseedMainAgentPrompt()         // mainagent 提示词加入「目标达成后 add_intent 反问是否建目标」(一次性)
-	s.reseedPlannerPrompt()           // planner 提示词:重写「0 意图」正当理由 + 加量化验收核对(一次性)
-	s.reseedWorkerPrompt()            // worker 提示词:加否定结论证据门槛(一次性)
-	s.reseedWorkerPromptDeps()        // worker 提示词:加第三方依赖 ../deps 与按需反编译约定(一次性)
-	s.reseedWorkerPromptObservation() // worker 提示词:加 report_observation 矩阵补派约定(一次性)
-	s.seedReporterAgent()             // 预置「报告撰写」agent + 工具绑定 + finding 触发器(一次性)
-	s.upgradeReporterTriggerMessage() // 老库补迁移:让 reporter 回传 evidence_version(一次性)
-	s.seedFindingTrafficTools()       // 增加可选证据参数及只读证据工具，保留用户配置
-	s.seedFindingPacketTool()         // report_finding 增加可选 retest_packet（推演复测报文），保留用户配置
-	s.backfillFindingPacketAssets()   // 老报文补上接口归属：一个漏洞可以有每个接口一份报文(一次性)
+	s.reseedGoalsPrompt()              // goals 提示词加入「抽操作约束」步 → 旧库追加一版新默认(一次性)
+	s.reseedMainAgentPrompt()          // mainagent 提示词加入「目标达成后 add_intent 反问是否建目标」(一次性)
+	s.reseedPlannerPrompt()            // planner 提示词:重写「0 意图」正当理由 + 加量化验收核对(一次性)
+	s.reseedPlannerPromptObservation() // planner 提示词:允许 worker 观察项新增矩阵格(一次性)
+	s.reseedWorkerPrompt()             // worker 提示词:加否定结论证据门槛(一次性)
+	s.reseedWorkerPromptDeps()         // worker 提示词:加第三方依赖 ../deps 与按需反编译约定(一次性)
+	s.reseedWorkerPromptObservation()  // worker 提示词:加 report_observation 矩阵补派约定(一次性)
+	s.seedReporterAgent()              // 预置「报告撰写」agent + 工具绑定 + finding 触发器(一次性)
+	s.upgradeReporterTriggerMessage()  // 老库补迁移:让 reporter 回传 evidence_version(一次性)
+	s.seedFindingTrafficTools()        // 增加可选证据参数及只读证据工具，保留用户配置
+	s.seedFindingPacketTool()          // report_finding 增加可选 retest_packet（推演复测报文），保留用户配置
+	s.backfillFindingPacketAssets()    // 老报文补上接口归属：一个漏洞可以有每个接口一份报文(一次性)
 	s.seedFindingWorkflowTools()
 	// 必须放在上面这些老迁移之后：它们会把 traffic_* 重新绑给 worker/reporter，
 	// 这一步再把所有出网/执行类工具收回（enabled=false + 解绑），让「系统配置 → 工具」
@@ -651,6 +652,34 @@ func (s *Server) reseedPlannerPrompt() {
 		return
 	}
 	log.Printf("[prompts] planner 提示词已追加新默认版本(精简重构+克制降级去重+深度优先+否定复核上界,一次性)")
+}
+
+// reseedPlannerPromptObservation adds the rule that report_observation cells
+// are authorized work, even when the incremental contract only listed delta and
+// manual cells. Without this, the planner may steer workers not to report
+// findings in observation cells.
+func (s *Server) reseedPlannerPromptObservation() {
+	const flag = "planner_prompt_observation_v1"
+	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
+		return
+	}
+	defer func() { _ = s.m.pg.SetSetting(flag, "true") }()
+	a, err := s.m.pg.GetAgentByKey("planner")
+	if err != nil || a == nil {
+		return
+	}
+	tmpl := agent.BuiltinPromptSeeds()["planner"]
+	if tmpl == "" {
+		return
+	}
+	if cur, err := s.m.pg.CurrentPrompt(a.ID); err == nil && cur == tmpl {
+		return
+	}
+	if _, err := s.m.pg.ResetPromptToDefault(a.ID, tmpl); err != nil {
+		log.Printf("[prompts] planner 提示词重刷为观察项授权版本失败: %v", err)
+		return
+	}
+	log.Printf("[prompts] planner 提示词已追加观察项授权版本(一次性)")
 }
 
 // reseedWorkerPrompt 把 worker 提示词刷成【当前代码默认】——默认正文 record_fact 段删掉了「否定类结论

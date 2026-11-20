@@ -26,7 +26,8 @@ var cellVulnCN = map[string]string{
 	"business_logic": "业务逻辑", "xxe": "XXE", "csrf": "CSRF",
 	"open_redirect": "开放重定向", "ssti": "SSTI", "ldap_injection": "LDAP 注入",
 	"mass_assignment": "批量赋值", "race_condition": "竞态条件",
-	"secrets": "硬编码凭据", "crypto": "弱加密", "dependency": "依赖漏洞",
+	"secrets": "硬编码凭据", "hardcoded-credentials": "硬编码凭据",
+	"crypto": "弱加密", "dependency": "依赖漏洞",
 	"sensitive_data": "敏感数据暴露",
 }
 
@@ -604,6 +605,8 @@ func (s *Server) caSubmitVerdict(w http.ResponseWriter, r *http.Request) {
 // 目的：同一处代码只由同一个 worker 判定一次，避免 command-exec 与
 // deserialization 对同一个 new Yaml() 各报一条 finding。
 func (s *Server) seedCellIntents(t *Task, limit int) (int, error) {
+	s.cellSeedMu.Lock()
+	defer s.cellSeedMu.Unlock()
 	maxGroups := limit
 	if maxGroups <= 0 {
 		maxGroups = 10000
@@ -635,7 +638,7 @@ func (s *Server) seedCellIntents(t *Task, limit int) (int, error) {
 		prio := 0
 		for _, c := range g.Cells {
 			cellKeys = append(cellKeys, c.CellKey)
-			names = append(names, cellVulnCN[c.VulnClass])
+			names = append(names, cellDisplayName(c.VulnClass))
 			var checklist []string
 			_ = json.Unmarshal(c.Checklist, &checklist)
 			var hints map[string]any
@@ -895,7 +898,7 @@ func (s *Server) resolveMatrixIntent(t *Task, spec agent.IntentSpec) (*agent.Res
 				"flow": []any{}, "sites": sites, "sinks": sites,
 				"planner_files": spec.Files, "planner_endpoints": spec.Endpoints,
 			})
-			dir := "审计 " + tgt.Method + " " + tgt.URL + " 的「" + cellVulnCN[tgt.VulnClass] + "」风险（planner 补派）"
+			dir := "审计 " + tgt.Method + " " + tgt.URL + " 的「" + cellDisplayName(tgt.VulnClass) + "」风险（planner 补派）"
 			_, err := s.m.PG().Cells().Import(taskID, []db.CellInput{{
 				CellKey: key, Direction: dir, VulnClass: tgt.VulnClass,
 				Priority: 14, Bucket: "P1", Checklist: cellChecklistCN[tgt.VulnClass],
