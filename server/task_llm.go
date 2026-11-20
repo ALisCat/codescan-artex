@@ -569,6 +569,9 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 			wk.SetCellVerdict(func(cellKey, verdict, reason string, evidence json.RawMessage) error {
 				return s.m.pg.Cells().SubmitVerdict(tid, cellKey, verdict, reason, evidence)
 			})
+			wk.SetObservation(func(spec agent.ObservationSpec) (agent.ObservationResult, error) {
+				return s.recordWorkerObservation(t, spec)
+			})
 		}
 	}
 	wk.SetCompactionWindowResolver(workerRuntime.CompactionWindow)

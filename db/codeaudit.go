@@ -591,3 +591,19 @@ func (s *CellStore) Count(taskID int64) (int, error) {
 	err := s.db.QueryRow(`SELECT count(*) FROM ca_cells WHERE task_id=$1`, taskID).Scan(&n)
 	return n, err
 }
+
+// ResetForObservation turns a settled-not-audited cell into a pending cell after
+// a worker reports a new in-scope observation. Cells with confirmed/clean/
+// needs_more conclusions must not be overwritten by this path.
+func (s *CellStore) ResetForObservation(taskID int64, cellKey, reason string) (bool, error) {
+	res, err := s.db.Exec(`
+UPDATE ca_cells SET eligibility='applicable', status='pending', intent_id=NULL,
+    attempts=0, last_error='', reason=$3, updated_at=now()
+WHERE task_id=$1 AND cell_key=$2 AND status NOT IN ('pending','dispatched','confirmed','clean','needs_more')`,
+		taskID, cellKey, reason)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}

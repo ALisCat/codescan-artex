@@ -77,6 +77,8 @@ type Worker struct {
 	extraTools []actool.CoreTool
 	// 二开：矩阵结论回写回调（nil = 无矩阵上下文）
 	cellVerdict func(cellKey, verdict, reason string, evidence json.RawMessage) error
+	// 二开：结构化观察项补派回调（nil = 无矩阵上下文）
+	observation func(ObservationSpec) (ObservationResult, error)
 	// injectConstraints resolves whether this task's operation constraints get
 	// injected into the worker system prompt. Read per run so the settings toggle
 	// takes effect without rebuilding the agent. nil = inject (default).
@@ -154,6 +156,11 @@ func (w *Worker) wantConstraints() bool { return w.injectConstraints == nil || w
 // SetCellVerdict 注入矩阵结论回写回调。
 func (w *Worker) SetCellVerdict(fn func(cellKey, verdict, reason string, evidence json.RawMessage) error) {
 	w.cellVerdict = fn
+}
+
+// SetObservation 注入 worker 结构化观察项回调。
+func (w *Worker) SetObservation(fn func(ObservationSpec) (ObservationResult, error)) {
+	w.observation = fn
 }
 
 func (w *Worker) SetRunTimeout(run time.Duration) {
@@ -337,6 +344,7 @@ const workerDefaultTmpl = `你是一个代码安全审计平台（CodeScan）的
 **边发现边写回**（写进图才算数，脑子/文字里的不算；每得一个结果立刻写，别攒到最后被步数耗尽丢掉）。三种写回，别串图：
 - **接口/资产 → insert_assets（资产图）**：代码里能暴露出来的东西都是资产，**最重要的是接口**，用 type=endpoint 登记：url（接口路径，如 /api/user/register 或 POST /api/user/register）、method（HTTP 方法）、params（参数数组，元素 {location,name,type}，location 取 query/body/path/header/cookie）、permission（**该接口所需的权限**，统一用这几个值之一：公开、注册用户、登录用户、管理员权限、内部接口、其他）、file/line（可选，该接口在源码中的文件与行号）。**权限判定是本平台的特色产出**：看到接口就要判断"这个接口谁能调"，依据是鉴权注解/中间件/路由分组/网关白名单/框架安全配置/自研鉴权工具类，把判断依据同时写进 finding 证据或旁边的事实里。**内部接口（未鉴权、内网专用、调试/管理接口）是最重要的发现**。写之前先用 list_assets / node_detail 看有没有登记过，避免重复。**这里只登记资产；审计结论/判断不写这里，用 record_fact。**
 - **审计结论/事实 → record_fact（探索图，传 intent_id）**：都用它。**多个观察汇总成【一条】事实**（summary 一句总结 + detail 写对总结的拓展，依靠真实的读码过程），不要一个属性一条、一意图通常只一条，拆碎会让图谱无限膨胀——**默认就写一条，能并进 detail 的都并进去**；仅当确有【彼此完全独立、无法归并】的结论时才用 facts 数组分条，这是极少数例外，不是常规。**只写增量**：只记这次【新得到】的，别把已有事实换措辞重记（只印证已有、无新增就不必记）。**只写真实读到的**：给 evidence（一行：文件:行号 + 关键代码片段，简洁，细节在 detail）、标 confidence（observed=直接读到 / inferred=据代码推断）。
+- **矩阵补派观察 → report_observation**：发现当前矩阵格之外、但属于本次变更接口或漏洞类型的风险时，调用 report_observation（method/url/vulnclass/summary/reason/evidence）。服务端会判断：在本次 delta/manual 范围内就加入矩阵并派发；不在范围内则记录为延后观察。不要用普通 fact 代替矩阵补派观察。
 - **确认漏洞 → report_finding（探索图，传 intent_id）**：**证据必须是可复核的源码位置 + 代码片段**，格式示例：src/main/java/com/x/UserController.java:88 后面接关键代码行；不得使用"已访问过/请求响应对比/运行时现象"这类运行时证据（本平台不发起任何请求，结论只能由源码支撑）。severity 按严重/高/中/低判断，填对应枚举值 critical/high/medium/low；修复建议要具体到改法（改哪一行、加什么校验、换成什么安全 API）。严禁把"依赖版本命中 CVE""参数看起来可注入""靠补丁 diff 推断"当已确认漏洞。证据不足但有嫌疑 → 用 record_fact 记一条 inferred 事实（嫌疑点 + 还缺什么证据）交规划者，别硬记成 finding。报之前先 list_findings 查重，同一处缺陷不要报两次。
 
 
@@ -855,6 +863,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	tsx.SetEnrich(enr)                  // async DNS/HTTP auto-completion for assets this worker writes
 	tsx.SetNotifyFinding(notifyFinding) // report_finding 落库时当场唤醒 planner，带上「哪个意图+finding」
 	tsx.SetCellVerdict(w.cellVerdict)   // 二开：矩阵格子结论回写
+	tsx.SetObservation(w.observation)   // 二开：结构化观察项补派
 	// base = 本 worker 的领域工具 ∪ host 工具（traffic 等）∪ 代码审计通用文件工具；
 	// 之后再并入该 agent 可见的 skills。收尾阶段要禁用的工具走
 	// Settlement.DisabledTools（见下面的 wrapupSettlement），本地不再单独做门禁。

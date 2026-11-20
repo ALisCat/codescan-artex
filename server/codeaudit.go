@@ -983,3 +983,106 @@ func (s *Server) resolveMatrixIntent(t *Task, spec agent.IntentSpec) (*agent.Res
 	}
 	return &agent.ResolvedIntent{Payload: payload, Bind: bind}, nil
 }
+
+// recordWorkerObservation handles the structured report_observation tool.
+// Observations inside the current delta/manual endpoint scope become matrix
+// cells and are dispatched immediately; unrelated observations are deferred to
+// the tool (which records them as facts).
+func (s *Server) recordWorkerObservation(t *Task, spec agent.ObservationSpec) (agent.ObservationResult, error) {
+	if t == nil {
+		return agent.ObservationResult{}, fmt.Errorf("task not found")
+	}
+	taskID, err := parseTaskID(t.ID)
+	if err != nil {
+		return agent.ObservationResult{}, err
+	}
+	method := strings.ToUpper(strings.TrimSpace(spec.Method))
+	url := strings.TrimSpace(spec.URL)
+	vuln := strings.TrimSpace(spec.VulnClass)
+	if method == "" || url == "" || vuln == "" {
+		return agent.ObservationResult{}, fmt.Errorf("method/url/vulnclass 均为必填")
+	}
+	if len([]rune(vuln)) > 80 {
+		return agent.ObservationResult{}, fmt.Errorf("vulnclass 不能超过 80 字")
+	}
+	cells, err := s.m.PG().Cells().List(taskID, "")
+	if err != nil {
+		return agent.ObservationResult{}, err
+	}
+	cellKey := url + ":" + vuln
+	inScope := false
+	var existing *db.Cell
+	var template *db.Cell
+	for i := range cells {
+		c := &cells[i]
+		if c.Method != method || c.EndpointURL != url {
+			continue
+		}
+		if template == nil {
+			template = c
+		}
+		if c.Origin == "delta" || c.Origin == "manual" {
+			inScope = true
+		}
+		if c.CellKey == cellKey {
+			existing = c
+		}
+	}
+	if !inScope {
+		return agent.ObservationResult{
+			Deferred: true,
+			Message:  "观察项不在本次 delta/manual 审计范围内，已记录为延后观察，不自动派发。",
+		}, nil
+	}
+	if existing != nil {
+		switch existing.Status {
+		case "pending", "dispatched":
+			return agent.ObservationResult{Message: "该矩阵格已在队列中，观察项已记录。"}, nil
+		case "confirmed", "clean", "needs_more":
+			return agent.ObservationResult{
+				Deferred: true,
+				Message:  "该矩阵格已有审计结论，观察项已记录为延后观察；请在后续任务中复核。",
+			}, nil
+		}
+		ok, err := s.m.PG().Cells().ResetForObservation(taskID, cellKey, "worker 观察项："+spec.Summary)
+		if err != nil {
+			return agent.ObservationResult{}, err
+		}
+		if !ok {
+			return agent.ObservationResult{Message: "矩阵格状态不允许自动重置，观察项已记录。"}, nil
+		}
+	} else {
+		cell := db.CellInput{
+			CellKey: cellKey, VulnClass: vuln, Eligibility: "applicable",
+			Priority: 5, Bucket: "P2", Direction: "worker 观察项：" + spec.Summary,
+			Checklist: append([]string(nil), manualGenericChecklist...),
+			Reason:    "worker 观察项：" + spec.Summary,
+		}
+		cell.Endpoint.Method = method
+		cell.Endpoint.URL = url
+		if template != nil {
+			cell.Hints = template.Hints
+			cell.HintsNote = template.HintsNote
+			cell.Trace = template.Trace
+			cell.Priority = template.Priority
+			cell.Bucket = template.Bucket
+		}
+		if _, err := s.m.PG().Cells().ImportSnapshot(taskID, []db.CellSnapshotInput{{
+			Cell: cell, Origin: "observation", Status: "pending",
+		}}); err != nil {
+			return agent.ObservationResult{}, err
+		}
+	}
+	if _, err := s.seedCellIntents(t, 0); err != nil {
+		return agent.ObservationResult{}, err
+	}
+	intent := int64(0)
+	if c, _ := s.m.PG().Cells().Get(taskID, cellKey); c != nil && c.IntentID != nil {
+		intent = *c.IntentID
+	}
+	msg := "观察项已加入本次矩阵并派发"
+	if intent > 0 {
+		msg += fmt.Sprintf("（intent #%d）", intent)
+	}
+	return agent.ObservationResult{Message: msg}, nil
+}

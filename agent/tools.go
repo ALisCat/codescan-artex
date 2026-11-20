@@ -97,6 +97,8 @@ type ToolSet struct {
 	matrixSeed    func() (int, error)
 	// 二开：矩阵结论回写。nil = 当前任务没有矩阵上下文（工具报不可用）。
 	cellVerdict func(cellKey, verdict, reason string, evidence json.RawMessage) error
+	// worker structured observation; nil = unavailable.
+	observation func(ObservationSpec) (ObservationResult, error)
 	// resumeTask, if set, revives the task after a graph change that should make a
 	// stopped task run again (currently: set_goals adds a goal). It flips a terminal/
 	// paused task back to running and (re)starts the engine loops — a plain notify()
@@ -209,6 +211,26 @@ func (w WriteCounts) String() string {
 // tell "explored but persisted nothing" apart from a completed intent, and log an
 // honest breakdown instead of calling assets/findings "facts").
 func (t *ToolSet) Writes() WriteCounts { return t.writes }
+
+type ObservationSpec struct {
+	IntentID  int64  `json:"intent_id"`
+	Method    string `json:"method"`
+	URL       string `json:"url"`
+	VulnClass string `json:"vulnclass"`
+	Summary   string `json:"summary"`
+	Reason    string `json:"reason"`
+	Evidence  string `json:"evidence"`
+}
+
+type ObservationResult struct {
+	Deferred bool
+	Message  string
+}
+
+// SetObservation wires the server-side matrix/deferred observation resolver.
+func (t *ToolSet) SetObservation(fn func(ObservationSpec) (ObservationResult, error)) {
+	t.observation = fn
+}
 
 func NewToolSet(ts *db.ExplorationStore, worker string) *ToolSet {
 	return &ToolSet{ts: ts, worker: worker}
@@ -1746,6 +1768,58 @@ func (t *ToolSet) setConstraints() actool.CoreTool {
 				out["errors"] = errs
 			}
 			return jsonResult(out)
+		})
+}
+
+// reportObservation lets a worker report a new observation without silently
+// polluting the graph with a free-form fact. The server decides whether the
+// observation is inside the current delta/manual scope and should be added to
+// the matrix, or deferred.
+func (t *ToolSet) reportObservation() actool.CoreTool {
+	return writeTool("report_observation",
+		"记录一条 worker 观察项，并交由服务端判断是否需要加入审计矩阵。\n"+
+			"当你在审计过程中发现当前矩阵格之外的风险、接口新类型或调用链异常时使用。\n"+
+			"如果在本次增量范围内，服务端会创建/更新矩阵格并派发；如果不在范围内，会记录为延后观察。\n"+
+			"最终结论仍应通过 submit_cell_verdict 或 record_fact 写回。",
+		obj(map[string]any{
+			"method":    str("HTTP 方法，例如 GET/POST"),
+			"url":       str("接口路径，例如 /api/appointment/cancel"),
+			"vulnclass": str("漏洞类型 key，例如 authz/ssrf/sql-injection"),
+			"summary":   str("一句话说明观察到的风险或异常"),
+			"reason":    str("为什么认为需要进一步审计"),
+			"evidence":  str("源码位置 + 关键代码片段"),
+		}, "method", "url", "vulnclass", "summary"),
+		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
+			var spec ObservationSpec
+			if err := json.Unmarshal(in, &spec); err != nil {
+				return actool.Errorf("参数解析失败: " + err.Error()), nil
+			}
+			spec.Method = strings.ToUpper(strings.TrimSpace(spec.Method))
+			spec.URL = strings.TrimSpace(spec.URL)
+			spec.VulnClass = strings.TrimSpace(spec.VulnClass)
+			spec.Summary = strings.TrimSpace(spec.Summary)
+			if spec.Method == "" || spec.URL == "" || spec.VulnClass == "" || spec.Summary == "" {
+				return actool.Errorf("method/url/vulnclass/summary 均为必填"), nil
+			}
+			if t.observation == nil {
+				return actool.Errorf("当前运行没有观察项补派上下文"), nil
+			}
+			spec.IntentID = t.ownerNode
+			res, err := t.observation(spec)
+			if err != nil {
+				return actool.Errorf(err.Error()), nil
+			}
+			if res.Deferred {
+				detail := strings.TrimSpace(spec.Reason)
+				if e := strings.TrimSpace(spec.Evidence); e != "" {
+					detail += "\n" + e
+				}
+				_, _ = t.recordOneFact(factItem{
+					Summary: "延后观察：" + spec.Summary, Detail: detail,
+					IntentID: json.RawMessage(strconv.FormatInt(spec.IntentID, 10)),
+				}, spec.IntentID)
+			}
+			return actool.Text(res.Message), nil
 		})
 }
 

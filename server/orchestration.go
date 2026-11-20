@@ -491,6 +491,7 @@ func (s *Server) seedOrchestrationTools() {
 	s.reseedPlannerPrompt()           // planner 提示词:重写「0 意图」正当理由 + 加量化验收核对(一次性)
 	s.reseedWorkerPrompt()            // worker 提示词:加否定结论证据门槛(一次性)
 	s.reseedWorkerPromptDeps()        // worker 提示词:加第三方依赖 ../deps 与按需反编译约定(一次性)
+	s.reseedWorkerPromptObservation() // worker 提示词:加 report_observation 矩阵补派约定(一次性)
 	s.seedReporterAgent()             // 预置「报告撰写」agent + 工具绑定 + finding 触发器(一次性)
 	s.upgradeReporterTriggerMessage() // 老库补迁移:让 reporter 回传 evidence_version(一次性)
 	s.seedFindingTrafficTools()       // 增加可选证据参数及只读证据工具，保留用户配置
@@ -710,6 +711,33 @@ func (s *Server) reseedWorkerPromptDeps() {
 		return
 	}
 	log.Printf("[prompts] worker 提示词已追加新默认版本(第三方依赖 ../deps 与按需反编译约定,一次性)")
+}
+
+// reseedWorkerPromptObservation adds the structured matrix-observation tool
+// guidance to existing worker prompts. Default seeding only affects empty DBs,
+// so versioned reseeding is required for upgraded installations.
+func (s *Server) reseedWorkerPromptObservation() {
+	const flag = "worker_prompt_observation_v6"
+	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
+		return
+	}
+	defer func() { _ = s.m.pg.SetSetting(flag, "true") }()
+	a, err := s.m.pg.GetAgentByKey("worker")
+	if err != nil || a == nil {
+		return
+	}
+	tmpl := agent.BuiltinPromptSeeds()["worker"]
+	if tmpl == "" {
+		return
+	}
+	if cur, err := s.m.pg.CurrentPrompt(a.ID); err == nil && cur == tmpl {
+		return
+	}
+	if _, err := s.m.pg.ResetPromptToDefault(a.ID, tmpl); err != nil {
+		log.Printf("[prompts] worker 观察项提示词重刷失败: %v", err)
+		return
+	}
+	log.Printf("[prompts] worker 提示词已追加 report_observation 矩阵补派约定(一次性)")
 }
 
 // reporterToolCallMessage 必须无条件要求先读一次 get_finding_traffic 再写报告。
