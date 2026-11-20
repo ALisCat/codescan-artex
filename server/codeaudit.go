@@ -767,6 +767,9 @@ func (s *Server) matrixGuardForTask(t *Task, spec agent.IntentSpec) (bool, strin
 	if err != nil || n == 0 {
 		return true, "" // 非矩阵任务
 	}
+	if pending, dispatched, merr := s.matrixPendingForTask(t); merr == nil && pending == 0 && dispatched == 0 {
+		return false, "矩阵格已全部了结，本轮不再接受新的补派；请结束规划轮并证明目标完成。"
+	}
 	if !matrixIntentIsStructured(spec) {
 		return false, "矩阵任务补派必须提供 cell_keys 或 targets（或 scope=repo/pattern + files/endpoints）。" +
 			"不允许再生成只有 summary 的聚合专项；请直接指向具体矩阵格/接口类型。"
