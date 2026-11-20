@@ -859,8 +859,38 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 	}
 
 	autoStart := req.AutoStart == nil || *req.AutoStart
+	inheritedCount, newCount, removedCount := 0, 0, 0
+	for _, snap := range snapshots {
+		switch snap.Origin {
+		case "inherited":
+			inheritedCount++
+		case "new":
+			newCount++
+		case "removed":
+			removedCount++
+		}
+	}
+	manualList := make([]string, 0, len(manualByEndpoint))
+	for label, vuln := range manualByEndpoint {
+		manualList = append(manualList, label+" -> "+vuln)
+	}
+	excludedList := make([]string, 0, len(excluded))
+	for key := range excluded {
+		excludedList = append(excludedList, key)
+	}
+	contract := []string{
+		"【本次增量审计合同】",
+		fmt.Sprintf("base=%s target=%s changed_files=%d", shortSHA(run.BaseCommit), shortSHA(run.TargetCommit), run.ChangedFiles),
+		"自动 delta 格：" + previewList(run.DeltaCellKeys, 24),
+		"人工指定格：" + previewList(manualList, 16),
+		"人工否定格：" + previewList(excludedList, 16),
+		fmt.Sprintf("矩阵快照：inherited=%d new=%d removed=%d", inheritedCount, newCount, removedCount),
+		fmt.Sprintf("基线任务：#%d", *run.BaseTaskID),
+		"未覆盖接口：" + previewList(run.DeltaGaps, 16),
+		"规则：只审计 delta/manual 格；inherited 只读，不重新审计；补派 add_intent 必须提供 summary + cell_keys 或 targets，禁止 new_string/old_string 参数。",
+	}
 	desc := fmt.Sprintf("增量审计 GitLab 项目 %s（%s @ %s，base %s）", p.Path, projectBranch(p), shortSHA(run.TargetCommit), shortSHA(run.BaseCommit))
-	goal := "只审计本次增量矩阵格（变更文件影响的接口与漏洞类型）；未变更矩阵格的结论从基线任务只读继承，不重新审计、不发请求、不编译业务源码。"
+	goal := "只审计本次增量矩阵格（变更文件影响的接口与漏洞类型）；未变更矩阵格的结论从基线任务只读继承，不重新审计、不发请求、不编译业务源码。\n\n" + strings.Join(contract, "\n")
 	task, err := s.m.CreateTaskWithOptions(desc, goal, db.TaskCreateOptions{
 		Name:          fmt.Sprintf("%s · 增量审计 %s", p.Name, shortSHA(run.TargetCommit)),
 		CreatedBy:     &me.ID,
@@ -955,6 +985,20 @@ func (s *Server) loadBaseMatrix(baseTaskID int64) (map[string]db.Cell, error) {
 		}
 	}
 	return out, nil
+}
+
+func previewList(items []string, limit int) string {
+	if len(items) == 0 {
+		return "（无）"
+	}
+	if limit <= 0 || limit > len(items) {
+		limit = len(items)
+	}
+	out := strings.Join(items[:limit], ", ")
+	if len(items) > limit {
+		out += fmt.Sprintf(" 等 %d 项", len(items)-limit)
+	}
+	return out
 }
 
 func cellInputFromCell(c db.Cell) db.CellInput {
