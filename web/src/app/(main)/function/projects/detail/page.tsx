@@ -476,6 +476,7 @@ function DetailInner() {
     (!p.last_seen_commit || latestAudit.target_commit === p.last_seen_commit)
       ? latestAudit
       : null;
+  const runChain = [...audits].slice(0, 12).reverse();
   const activeScope = incrementalTab === "reviewed" ? preview?.reviewed : preview?.unreviewed;
   const unreadCount = preview?.unreviewed?.summary.commits ?? preview?.review_summary?.commits ?? 0;
   const reviewedCount =
@@ -696,6 +697,86 @@ function DetailInner() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <GitCommitHorizontalIcon className="size-4" />
+            审计运行链
+          </CardTitle>
+          <CardDescription>全量建立基线，增量审计沿任务链向后推进；历史 target 不会被改写。</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {runChain.length === 0 ? (
+            <div className="text-muted-foreground text-sm">还没有审计运行记录。</div>
+          ) : (
+            <div className="space-y-0">
+              {runChain.map((run, index) => {
+                const isCurrentBaseline = p.last_audited_run_id === run.id && p.last_audited_commit === run.target_commit;
+                const isLatest = latestAudit?.id === run.id;
+                const label = run.mode === "full" ? "全量" : run.mode === "manual_review" ? "人工复核" : "增量";
+                return (
+                  <div key={run.id} className="relative flex gap-3 pb-4 last:pb-0">
+                    <div className="relative flex w-4 shrink-0 justify-center">
+                      {index < runChain.length - 1 && <span className="bg-border absolute top-4 bottom-0 w-px" />}
+                      <span
+                        className={
+                          isCurrentBaseline
+                            ? "relative z-10 mt-1 size-2.5 rounded-full bg-emerald-500 ring-4 ring-emerald-500/15"
+                            : isLatest
+                              ? "relative z-10 mt-1 size-2.5 rounded-full bg-sky-500 ring-4 ring-sky-500/15"
+                              : "bg-muted-foreground/40 relative z-10 mt-1 size-2.5 rounded-full ring-4 ring-muted"
+                        }
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1 rounded-lg border px-3 py-2">
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <Badge variant="outline">{label}</Badge>
+                        <span className="font-medium">运行 #{run.id}</span>
+                        <span className="text-muted-foreground font-mono">
+                          {shortCommit(run.base_commit)} → {shortCommit(run.target_commit)}
+                        </span>
+                        <Badge variant="outline">{run.status}</Badge>
+                        {isCurrentBaseline && (
+                          <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+                            当前基线
+                          </Badge>
+                        )}
+                        {isLatest && !isCurrentBaseline && (
+                          <Badge variant="outline" className="border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300">
+                            最近运行
+                          </Badge>
+                        )}
+                        {run.task_id && (
+                          <Link
+                            href={`/function/tasks/detail?id=${run.task_id}`}
+                            className="text-foreground inline-flex items-center gap-0.5 underline underline-offset-2"
+                          >
+                            任务 #{run.task_id}
+                          </Link>
+                        )}
+                      </div>
+                      <div className="text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
+                        {run.mode === "incremental" && (
+                          <>
+                            <span>变更文件 {run.changed_files}</span>
+                            <span>自动 delta {run.delta_cells}</span>
+                            {(run.delta_gaps?.length ?? 0) > 0 && <span>未覆盖接口 {run.delta_gaps.length}</span>}
+                          </>
+                        )}
+                        {run.mode === "manual_review" && <span>不推进审计基线</span>}
+                        {run.mode === "full" && <span>建立完整矩阵基线</span>}
+                        <span>创建于 {fmtTime(run.created_at)}</span>
+                      </div>
+                      {run.error_message && <div className="mt-1 text-[11px] text-red-600 dark:text-red-400">{run.error_message}</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="flex flex-wrap items-start justify-between gap-3">
