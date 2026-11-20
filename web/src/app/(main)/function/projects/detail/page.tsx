@@ -512,8 +512,12 @@ function DetailInner() {
   const hasAudit = !!p.last_audited_commit;
   const trackedBranch = p.tracked_branch || p.default_branch || "main";
   const latestAudit = audits[0];
-  const fullAuditActive = !!latestAudit && ["fetching", "preparing", "running", "ready", "review"].includes(latestAudit.status);
-  const auditBusy = starting || fullAuditActive;
+  const activeAudit = audits.find((run) =>
+    ["fetching", "preparing", "running", "ready", "review"].includes(run.status),
+  );
+  const activeFullAudit = activeAudit?.mode === "full" ? activeAudit : null;
+  const fullAuditBusy = starting || !!activeFullAudit;
+  const fullAuditDisabled = starting || !!activeAudit;
   const targetCommit = preview?.target_commit || p.last_seen_commit;
   const reviewed = !!preview?.target_commit && p.last_reviewed_commit === preview.target_commit;
   const targetHasChanges = !!p.last_audited_commit && !!p.last_seen_commit && p.last_seen_commit !== p.last_audited_commit;
@@ -590,9 +594,15 @@ function DetailInner() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={startFullAudit} disabled={auditBusy}>
-            {auditBusy ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}
-            {starting ? "正在发起…" : fullAuditActive ? "全量审计进行中…" : "发起全量审计"}
+          <Button onClick={startFullAudit} disabled={fullAuditDisabled}>
+            {fullAuditBusy ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}
+            {starting
+              ? "正在发起…"
+              : activeFullAudit
+                ? "全量审计进行中…"
+                : activeAudit
+                  ? "已有审计进行中"
+                  : "发起全量审计"}
           </Button>
           <Button variant="outline" onClick={() => setRunsOpen(true)}>
             <GitCommitHorizontalIcon className="size-4" />
@@ -605,38 +615,38 @@ function DetailInner() {
         </div>
       </div>
 
-      {fullAuditActive && latestAudit && (
+      {activeFullAudit && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-sm">
           <div className="flex min-w-0 items-start gap-2">
             <Loader2Icon className="mt-0.5 size-4 shrink-0 animate-spin text-sky-600" />
             <div className="min-w-0">
               <div className="font-medium text-sky-800 dark:text-sky-200">全量审计已发起</div>
               <div className="text-muted-foreground mt-0.5 text-xs">
-                审计批次 #{latestAudit.batch_no ?? latestAudit.id} ·
-                {latestAudit.status === "fetching"
+                审计批次 #{activeFullAudit.batch_no ?? activeFullAudit.id} ·
+                {activeFullAudit.status === "fetching"
                   ? " 正在下载源码"
-                  : latestAudit.status === "preparing"
+                  : activeFullAudit.status === "preparing"
                     ? " 正在准备矩阵"
-                    : latestAudit.status === "running"
+                    : activeFullAudit.status === "running"
                       ? " 任务已创建，审计进行中"
-                      : latestAudit.status === "ready"
+                      : activeFullAudit.status === "ready"
                         ? " 任务已就绪"
                         : " 等待当前任务结束"}
-                {latestAudit.task_id && (
+                {activeFullAudit.task_id && (
                   <>
                     {" · "}
                     <Link
-                      href={`/function/tasks/detail?id=${latestAudit.task_id}`}
+                      href={`/function/tasks/detail?id=${activeFullAudit.task_id}`}
                       className="text-foreground underline underline-offset-2"
                     >
-                      执行任务 #{latestAudit.task_id}
+                      执行任务 #{activeFullAudit.task_id}
                     </Link>
                   </>
                 )}
               </div>
             </div>
           </div>
-          <div className="text-muted-foreground shrink-0 font-mono text-[11px]">target {shortCommit(latestAudit.target_commit)}</div>
+          <div className="text-muted-foreground shrink-0 font-mono text-[11px]">target {shortCommit(activeFullAudit.target_commit)}</div>
         </div>
       )}
 
@@ -1235,9 +1245,15 @@ function DetailInner() {
                     下载当前分支 {trackedBranch} 的源码并建立完整矩阵基线。
                   </div>
                 </div>
-                <Button size="sm" onClick={startFullAudit} disabled={auditBusy}>
-                  {auditBusy ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}
-                  {latestAudit?.status === "fetching" ? "正在准备源码…" : "发起全量审计"}
+                <Button size="sm" onClick={startFullAudit} disabled={fullAuditDisabled}>
+                  {fullAuditBusy ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}
+                  {starting
+                    ? "正在发起…"
+                    : activeFullAudit
+                      ? "全量审计进行中…"
+                      : activeAudit
+                        ? "已有审计进行中"
+                        : "发起全量审计"}
                 </Button>
               </div>
               {latestAudit?.task_id && ["ready", "review", "running"].includes(latestAudit.status) && (
