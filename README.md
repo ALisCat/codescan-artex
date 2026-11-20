@@ -14,6 +14,8 @@
 
 CodeScan-Artex 是一个面向**静态代码审计**的 LLM 多 Agent 平台。它不运行被测应用，不发请求，不编译业务源码，也不把“规则命中”直接当漏洞。项目在Ernket/CodeScan-Artex基础上修改，以个人粗浅代审经验进行功能添加，极度依赖原项目基础能力，想深入了解原项目底层架构可以前往原项目查看。
 
+当前版本已支持 **GitLab 项目维度**：同一仓库可按分支创建项目，执行全量基线、增量预览/审计、已阅基线、矩阵继承和审计批次记录。
+
 它把一次代码审计拆成三步：
 
 1. **建图**：从源码构建接口、调用链、DAO/XML、参数和守卫线索；
@@ -63,7 +65,7 @@ Read · Write · Edit · MultiEdit · LS · Glob · Grep
 
 没有 `Bash`、`WebFetch`、`WebSearch`、MCP 工具或流量工具。危险工具在装配层被移除，配置层即使误加也会在最终工具列表中被黑名单剔除。写入侧另有命令拦截规则兜底。
 
-唯一的外部源码搬运发生在**任务创建前**：服务端可以从 GitHub / GitLab 下载公开仓库归档，产出与手动上传 zip 相同的本地只读目录。Agent 本身没有网络权限。
+唯一的外部源码搬运发生在**任务创建前**：服务端可以从 GitHub / GitLab 下载源码归档，或对 GitLab 项目执行 compare 并构造目标源码快照。增量预览只调用 GitLab compare；真正的增量准备会复制基线源码并应用变更文件。Agent 本身没有网络权限。
 
 > 结论必须由源码证据支撑。N/A 表示“结构上未发现该类入口/sink”，不是“安全”；`clean` 也必须写出正向校验证据。
 
@@ -140,6 +142,115 @@ submit_cell_verdict(cell_key, verdict, reason, evidence)
 - 只有全部有结论，任务才允许结束。
 
 ---
+
+## GitLab 项目审计
+
+项目身份是 **GitLab 仓库 + 分支**。同一仓库的不同分支可以建立不同项目，项目名称可自定义。
+
+### 全量审计
+
+全量审计会：
+
+1. 固定目标分支 HEAD 为 target commit；
+2. 下载并解压源码；
+3. 对目标完整源码生成矩阵；
+4. 创建执行任务并启动 worker；
+5. 任务真正成功后，才推进 `last_audited_commit`。
+
+全量任务建立的是完整矩阵基线，后续增量都从这条基线继承未变更部分的结论。
+
+### 增量预览
+
+预览只读取 GitLab compare：
+
+- 不下载源码归档；
+- 不创建任务；
+- 不调用 LLM；
+- 只展示未阅 / 已阅未审计、影响文件、接口和审计缺口。
+
+“标记已阅”只移动变更分组，不改变审计基线，也不产生 finding。
+
+### 增量准备
+
+增量准备的源码不是只包含 diff：
+
+```text
+基线源码
++ GitLab compare 得到的变更文件
+= 目标提交的完整源码
+```
+
+然后对目标完整源码重新生成矩阵，再做四件事：
+
+1. 用本次变更行与 cell hints 求交，得到 `delta`；
+2. 与基线任务矩阵做 key 对比，得到 `inherited / new / removed`；
+3. 找出变更影响但没有可审格的接口，形成 `delta_gaps`；
+4. 找出目标矩阵中新增、结构上适用、但未命中变更行的格，形成 `new applicable`。
+
+增量任务最终矩阵的 origin：
+
+```text
+delta        本次变更命中，默认纳入审计
+manual       人工在缺口里指定类型
+observation  worker 审计过程中新增
+inherited    基线已有结论，只读继承
+new          目标有、基线没有
+removed      基线有、目标没有
+```
+
+### 增量预审页面
+
+开始增量审计前，项目详情页展示三类需要人判断的内容：
+
+- **自动 delta 候选**：默认纳入审计，可逐项否定；
+- **未覆盖接口**：人工选择或输入漏洞类型；
+- **新增适用格**：默认不审计，安全工程师勾选后才纳入本次审计。
+
+新增适用格不是漏洞结论，也不是 worker 观察项。它只是：
+
+```text
+目标矩阵中 applicable
++ 基线矩阵没有这个 key
++ 本次 diff 没有命中
+```
+
+如果没有人工勾选，它保持 `unverified`，不派发 worker。
+
+### 审计批次与执行任务
+
+这是两套不同编号：
+
+```text
+审计批次 #1  → project_audit_runs 中该项目的第一条审计记录
+执行任务 #44 → tasks 中真正运行审计的 Agent 任务
+```
+
+审计批次按项目独立从 `#1` 开始；全局数据库 ID 只用于内部 API 和路由。项目详情页的“审计记录”抽屉会同时展示审计批次和执行任务，避免把两者混淆。
+
+### 基线规则
+
+- 只有审计成功后才推进 `last_audited_commit`；
+- 标记已阅不推进审计基线；
+- 下一次增量使用当前基线任务作为 base，而不是始终使用最初的全量任务；
+- 新提交在本次审计运行期间不会混入，留给下一次增量；
+- force push、rebase 或目标不再是基线后代时，要求重新全量审计。
+
+### Worker 观察项
+
+worker 在审计过程中发现当前矩阵格之外的风险时，可以调用：
+
+```text
+report_observation(method, url, vulnclass, summary, reason, evidence)
+```
+
+服务端规则：
+
+- 接口处于本次 delta/manual 范围：创建 `origin=observation` 格并自动派发，不需要人工确认；
+- 该格已有运行中的 intent：只记录，不重复派发；
+- 该格已有结论：转为延后观察；
+- 接口不在本次范围：只记录为延后事实，不创建矩阵格。
+
+观察项新增的格属于本次授权范围，planner 不得以“只审计 delta/manual”为由压制它的 finding。
 
 ## 漏洞覆盖面
 
@@ -344,6 +455,8 @@ planner add_intent(IntentSpec)
 - `pattern` / `repo` 都受额度限制；
 - 任务完成门禁会阻止 `goal_met` 在 applicable 格子未完成时通过。
 
+矩阵任务另外提供 `report_observation`，用于 worker 在审计过程中报告矩阵外的风险；服务端负责判断范围内建格派发、范围外延后记录。
+
 ---
 
 ## 评测
@@ -508,8 +621,8 @@ python3 -m matrix.graph.build /path/to/source /tmp/graph.json --callgraph /tmp/c
 
 ```text
 agent/                 planner / worker / 工具 / 提示词 / 矩阵 intent 处理
-server/                HTTP API、矩阵导入、人工审计、完成门禁
-db/                     PostgreSQL schema 与 ca_cells 存储
+server/                HTTP API、GitLab 项目/全量与增量审计、矩阵导入、人工审计、完成门禁
+db/                     PostgreSQL schema、project_audit_runs、ca_cells 存储
 web/                    Next.js 前端（矩阵摘要 / 矩阵 / 抽屉）
 codeaudit/
   matrix/
@@ -547,6 +660,9 @@ codeaudit/
 - **依赖分析仍是粗筛**：`dependency` 目前基于已知高风险依赖模式，不包含完整 CVE 数据库和可达性判定。
 - **仓库级类型误报**：`secrets` / `crypto` / `sensitive_data` 仍需要人工或 worker 复核。
 - **成本**：尚未按漏洞类型细化 `max_turns` 和输出预算；当前优化重点是流程正确性。
+- **新增适用格**：默认不自动审计，需要在增量预审页面人工勾选；这是为了避免基线不完整或矩阵规则漂移时意外扩大审计范围。
+- **延后观察**：范围外观察目前记录为事实，尚未提供独立的延后观察列表和提升 UI。
+- **增量预览**：只读 GitLab compare，不保证能替代对目标完整源码的人工浏览。
 - **评测语料**：demo 是内部变异语料，不能替代真实项目 holdout；需要持续补充盲写样本。
 
 ---
