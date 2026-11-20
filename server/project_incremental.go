@@ -786,6 +786,78 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		writeErr(w, 409, "基线任务源码不存在，请重新准备")
 		return
 	}
+
+	// Build a complete target-matrix snapshot. Existing cells inherit their
+	// base verdict; delta/manual cells become the only dispatchable rows.
+	baseByKey, err := s.loadBaseMatrix(*run.BaseTaskID)
+	if err != nil {
+		writeErr(w, 500, "读取基线矩阵失败："+err.Error())
+		return
+	}
+	selectedByKey := make(map[string]db.CellInput, len(body.Tasks))
+	for _, c := range body.Tasks {
+		selectedByKey[c.CellKey] = c
+	}
+	targetKeys := make(map[string]bool, len(fullBody.Tasks))
+	snapshots := make([]db.CellSnapshotInput, 0, len(fullBody.Tasks)+len(baseByKey))
+	for _, target := range fullBody.Tasks {
+		targetKeys[target.CellKey] = true
+		if excluded[target.CellKey] {
+			continue
+		}
+		label := strings.TrimSpace(target.Endpoint.Method + " " + target.Endpoint.URL)
+		if selected, ok := selectedByKey[target.CellKey]; ok {
+			origin := "delta"
+			if manualByEndpoint[label] != "" && strings.EqualFold(strings.TrimSpace(target.VulnClass), manualByEndpoint[label]) {
+				origin = "manual"
+				selected.Eligibility = "applicable"
+				selected.Hold = false
+				selected.Reason = "人工指定增量审计类型"
+			}
+			snapshots = append(snapshots, db.CellSnapshotInput{Cell: selected, Origin: origin})
+			continue
+		}
+		if old, ok := baseByKey[target.CellKey]; ok {
+			status := old.Status
+			if status == "pending" || status == "dispatched" {
+				status = "unverified"
+			}
+			source := old.TaskID
+			snapshots = append(snapshots, db.CellSnapshotInput{
+				Cell: target, Origin: "inherited", SourceTaskID: &source,
+				Status: status, Verdict: old.Verdict, Evidence: old.Evidence,
+			})
+			continue
+		}
+		newSnapshot := db.CellSnapshotInput{Cell: target, Origin: "new"}
+		if target.Eligibility == "applicable" || target.Eligibility == "needs_review" || target.Eligibility == "" {
+			newSnapshot.Status = "unverified"
+		}
+		snapshots = append(snapshots, newSnapshot)
+	}
+	// Manual types that are outside the target matrix are synthetic cells.
+	for _, selected := range body.Tasks {
+		if targetKeys[selected.CellKey] {
+			continue
+		}
+		snapshots = append(snapshots, db.CellSnapshotInput{Cell: selected, Origin: "manual"})
+	}
+	// Keep removed base cells visible as removed/N/A rather than silently
+	// dropping them from the new task's historical matrix.
+	for key, old := range baseByKey {
+		if targetKeys[key] {
+			continue
+		}
+		removed := cellInputFromCell(old)
+		removed.Eligibility = "not_applicable"
+		removed.Hold = false
+		source := old.TaskID
+		snapshots = append(snapshots, db.CellSnapshotInput{
+			Cell: removed, Origin: "removed", SourceTaskID: &source, Status: "na",
+			Verdict: old.Verdict, Evidence: old.Evidence,
+		})
+	}
+
 	autoStart := req.AutoStart == nil || *req.AutoStart
 	desc := fmt.Sprintf("增量审计 GitLab 项目 %s（%s @ %s，base %s）", p.Path, projectBranch(p), shortSHA(run.TargetCommit), shortSHA(run.BaseCommit))
 	goal := "只审计本次增量矩阵格（变更文件影响的接口与漏洞类型）；未变更矩阵格的结论从基线任务只读继承，不重新审计、不发请求、不编译业务源码。"
@@ -819,8 +891,12 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		return
 	}
 	s.m.SetTaskSourcePathInMemory(task.ID, relSource)
-	if _, _, err := s.importMatrixCells(task, body); err != nil {
+	if _, err := s.m.PG().Cells().ImportSnapshot(taskID, snapshots); err != nil {
 		cleanup("导入增量矩阵失败：" + err.Error())
+		return
+	}
+	if _, err := s.seedCellIntents(task, 0); err != nil {
+		cleanup("生成增量意图失败：" + err.Error())
 		return
 	}
 	_ = s.m.SetTaskMatrixState(task.ID, "ready", "")
@@ -831,12 +907,70 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 	if autoStart {
 		s.launchTask(task, desc+" "+goal, false)
 	}
-	log.Printf("[incremental] run=%d 启动任务 #%s target=%s delta_cells=%d inherited_source=%d", run.ID, task.ID, shortSHA(run.TargetCommit), len(body.Tasks), *run.BaseTaskID)
+	log.Printf("[incremental] run=%d 启动任务 #%s target=%s snapshot_cells=%d inherited_source=%d", run.ID, task.ID, shortSHA(run.TargetCommit), len(snapshots), *run.BaseTaskID)
 	updated, _ := s.m.pg.CodeProjects().GetAudit(run.ID)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"audit":   updated,
 		"task_id": taskID,
 	})
+}
+
+// loadBaseMatrix walks the direct source-task chain and returns the most recent
+// cell for each key. The current baseline task may contain only delta cells
+// (it was created by an older incremental implementation), while its ancestors
+// still hold the complete matrix and earlier conclusions.
+func (s *Server) loadBaseMatrix(baseTaskID int64) (map[string]db.Cell, error) {
+	out := map[string]db.Cell{}
+	if baseTaskID <= 0 {
+		return out, nil
+	}
+	seen := map[int64]bool{}
+	queue := []int64{baseTaskID}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if id <= 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		cells, err := s.m.PG().Cells().List(id, "")
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range cells {
+			if _, exists := out[c.CellKey]; !exists {
+				out[c.CellKey] = c
+			}
+		}
+		t, err := s.m.pg.GetTask(id)
+		if err != nil {
+			return nil, err
+		}
+		if t != nil {
+			for _, source := range t.SourceTaskIDs {
+				if !seen[source] {
+					queue = append(queue, source)
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+func cellInputFromCell(c db.Cell) db.CellInput {
+	var checklist []string
+	_ = json.Unmarshal(c.Checklist, &checklist)
+	return db.CellInput{
+		CellKey: c.CellKey, Direction: c.Direction, VulnClass: c.VulnClass,
+		Priority: c.Priority, Bucket: c.Bucket, Checklist: checklist,
+		Hints: c.Hints, HintsNote: c.HintsNote, Eligibility: c.Eligibility,
+		Reason: c.Reason, Trace: c.Trace,
+		Endpoint: struct {
+			Method  string `json:"method"`
+			URL     string `json:"url"`
+			AssetID int64  `json:"asset_id"`
+		}{Method: c.Method, URL: c.EndpointURL},
+	}
 }
 
 // POST /api/projects/{id}/incremental-runs/{runID}/review-task

@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS ca_cells (
     intent_id    BIGINT,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    origin       TEXT NOT NULL DEFAULT 'matrix',  -- matrix|inherited|delta|manual|new|removed
+    source_task_id BIGINT,
     UNIQUE (task_id, cell_key)
 );
 
@@ -35,3 +37,5 @@ CREATE INDEX IF NOT EXISTS idx_ca_cells_intent
 -- v0.4：重试与失败状态（意图 blocked/exhausted 时格子回填）
 ALTER TABLE ca_cells ADD COLUMN IF NOT EXISTS attempts   INT  NOT NULL DEFAULT 0;
 ALTER TABLE ca_cells ADD COLUMN IF NOT EXISTS last_error TEXT NOT NULL DEFAULT '';
+ALTER TABLE ca_cells ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'matrix';
+ALTER TABLE ca_cells ADD COLUMN IF NOT EXISTS source_task_id BIGINT;

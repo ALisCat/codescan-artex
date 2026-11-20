@@ -17,29 +17,31 @@ import (
 
 // Cell 是矩阵的一个格子。
 type Cell struct {
-	ID          int64           `json:"id"`
-	TaskID      int64           `json:"task_id"`
-	CellKey     string          `json:"cell_key"`
-	EndpointURL string          `json:"endpoint_url"`
-	Method      string          `json:"method"`
-	VulnClass   string          `json:"vulnclass"`
-	Eligibility string          `json:"eligibility"`
-	Priority    int             `json:"priority"`
-	Bucket      string          `json:"bucket"`
-	Direction   string          `json:"direction"`
-	Checklist   json.RawMessage `json:"checklist"`
-	Hints       json.RawMessage `json:"hints"`
-	HintsNote   string          `json:"hints_note"`
-	Reason      string          `json:"reason"`
-	Trace       json.RawMessage `json:"trace"`
-	Status      string          `json:"status"`
-	Verdict     string          `json:"verdict,omitempty"`
-	Evidence    json.RawMessage `json:"evidence,omitempty"`
-	IntentID    *int64          `json:"intent_id,omitempty"`
-	Attempts    int             `json:"attempts"`
-	LastError   string          `json:"last_error,omitempty"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
+	ID           int64           `json:"id"`
+	TaskID       int64           `json:"task_id"`
+	CellKey      string          `json:"cell_key"`
+	EndpointURL  string          `json:"endpoint_url"`
+	Method       string          `json:"method"`
+	VulnClass    string          `json:"vulnclass"`
+	Eligibility  string          `json:"eligibility"`
+	Priority     int             `json:"priority"`
+	Bucket       string          `json:"bucket"`
+	Direction    string          `json:"direction"`
+	Checklist    json.RawMessage `json:"checklist"`
+	Hints        json.RawMessage `json:"hints"`
+	HintsNote    string          `json:"hints_note"`
+	Reason       string          `json:"reason"`
+	Trace        json.RawMessage `json:"trace"`
+	Status       string          `json:"status"`
+	Verdict      string          `json:"verdict,omitempty"`
+	Evidence     json.RawMessage `json:"evidence,omitempty"`
+	IntentID     *int64          `json:"intent_id,omitempty"`
+	Attempts     int             `json:"attempts"`
+	LastError    string          `json:"last_error,omitempty"`
+	Origin       string          `json:"origin"`
+	SourceTaskID *int64          `json:"source_task_id,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 // CellInput 是导入时的一项（对应生成器 tasks.json 的一条）。
@@ -61,6 +63,18 @@ type CellInput struct {
 		URL     string `json:"url"`
 		AssetID int64  `json:"asset_id"`
 	} `json:"endpoint"`
+}
+
+// CellSnapshotInput is a target-matrix row with an explicit provenance and
+// settled status. Incremental tasks use it to merge base conclusions into the
+// complete target matrix without re-dispatching inherited cells.
+type CellSnapshotInput struct {
+	Cell         CellInput
+	Origin       string
+	SourceTaskID *int64
+	Status       string
+	Verdict      string
+	Evidence     json.RawMessage
 }
 
 // CellStore 是 ca_cells 的访问入口。
@@ -142,6 +156,96 @@ ON CONFLICT (task_id, cell_key) DO UPDATE SET
 	return n, nil
 }
 
+// ImportSnapshot inserts target-matrix rows with provenance and settled
+// status. Unlike Import, it preserves status/verdict/evidence for inherited
+// cells and does not seed intents.
+func (s *CellStore) ImportSnapshot(taskID int64, items []CellSnapshotInput) (int, error) {
+	if taskID <= 0 {
+		return 0, fmt.Errorf("task_id 无效")
+	}
+	n := 0
+	for _, item := range items {
+		it := item.Cell
+		if it.CellKey == "" || it.VulnClass == "" {
+			continue
+		}
+		elig := it.Eligibility
+		if elig == "" {
+			elig = "applicable"
+			if it.Bucket == "P3" {
+				elig = "needs_review"
+			}
+		}
+		status := item.Status
+		if status == "" {
+			status = "pending"
+			switch elig {
+			case "not_applicable":
+				status = "na"
+			case "unverified":
+				status = "unverified"
+			}
+			if it.Hold {
+				status = "hold"
+			}
+		}
+		direction := it.Direction
+		if direction == "" {
+			direction = "不适用：" + it.Reason
+		}
+		trace := it.Trace
+		if len(trace) == 0 || string(trace) == "null" {
+			trace = json.RawMessage(`[]`)
+		}
+		checklist, _ := json.Marshal(it.Checklist)
+		hints := it.Hints
+		if len(hints) == 0 || string(hints) == "null" {
+			hints = json.RawMessage(`{}`)
+		}
+		evidence := item.Evidence
+		if len(evidence) == 0 || string(evidence) == "null" {
+			evidence = nil
+		}
+		origin := item.Origin
+		if origin == "" {
+			origin = "matrix"
+		}
+		var verdict any
+		if item.Verdict != "" {
+			verdict = item.Verdict
+		}
+		_, err := s.db.Exec(`
+INSERT INTO ca_cells (task_id, cell_key, endpoint_url, method, vulnclass, eligibility,
+                      priority, bucket, direction, checklist, hints, hints_note,
+                      status, verdict, evidence, reason, trace, origin, source_task_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15::jsonb,$16,$17::jsonb,$18,$19)
+ON CONFLICT (task_id, cell_key) DO UPDATE SET
+    endpoint_url = EXCLUDED.endpoint_url,
+    method       = EXCLUDED.method,
+    vulnclass    = EXCLUDED.vulnclass,
+    eligibility  = EXCLUDED.eligibility,
+    priority     = EXCLUDED.priority,
+    bucket       = EXCLUDED.bucket,
+    direction    = EXCLUDED.direction,
+    checklist    = EXCLUDED.checklist,
+    hints        = EXCLUDED.hints,
+    hints_note   = EXCLUDED.hints_note,
+    reason       = EXCLUDED.reason,
+    trace        = EXCLUDED.trace,
+    origin       = EXCLUDED.origin,
+    source_task_id = EXCLUDED.source_task_id,
+    updated_at   = now()`,
+			taskID, it.CellKey, it.Endpoint.URL, it.Endpoint.Method, it.VulnClass, elig,
+			it.Priority, it.Bucket, direction, checklist, hints, it.HintsNote,
+			status, verdict, evidence, it.Reason, trace, origin, item.SourceTaskID)
+		if err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
+}
+
 // PendingUndispatched 取还没建过意图的格子（按优先级）。
 func (s *CellStore) PendingUndispatched(taskID int64, limit int) ([]Cell, error) {
 	if limit <= 0 {
@@ -150,7 +254,8 @@ func (s *CellStore) PendingUndispatched(taskID int64, limit int) ([]Cell, error)
 	rows, err := s.db.Query(`
 SELECT id, task_id, cell_key, endpoint_url, method, vulnclass, eligibility,
        priority, bucket, direction, checklist, hints, hints_note, reason, trace,
-       status, COALESCE(verdict,''), evidence, intent_id, attempts, last_error, created_at, updated_at
+       status, COALESCE(verdict,''), evidence, intent_id, attempts, last_error, created_at, updated_at,
+       COALESCE(origin,'matrix'), source_task_id
 FROM ca_cells
 WHERE task_id=$1 AND status='pending' AND intent_id IS NULL
 ORDER BY priority DESC, id ASC
@@ -167,7 +272,8 @@ func (s *CellStore) Get(taskID int64, cellKey string) (*Cell, error) {
 	rows, err := s.db.Query(`
 SELECT id, task_id, cell_key, endpoint_url, method, vulnclass, eligibility,
        priority, bucket, direction, checklist, hints, hints_note, reason, trace,
-       status, COALESCE(verdict,''), evidence, intent_id, attempts, last_error, created_at, updated_at
+       status, COALESCE(verdict,''), evidence, intent_id, attempts, last_error, created_at, updated_at,
+       COALESCE(origin,'matrix'), source_task_id
 FROM ca_cells WHERE task_id=$1 AND cell_key=$2 LIMIT 1`, taskID, cellKey)
 	if err != nil {
 		return nil, err
@@ -220,7 +326,8 @@ func (s *CellStore) List(taskID int64, status string) ([]Cell, error) {
 	q := `
 SELECT id, task_id, cell_key, endpoint_url, method, vulnclass, eligibility,
        priority, bucket, direction, checklist, hints, hints_note, reason, trace,
-       status, COALESCE(verdict,''), evidence, intent_id, attempts, last_error, created_at, updated_at
+       status, COALESCE(verdict,''), evidence, intent_id, attempts, last_error, created_at, updated_at,
+       COALESCE(origin,'matrix'), source_task_id
 FROM ca_cells WHERE task_id=$1`
 	args := []any{taskID}
 	if status != "" {
@@ -245,11 +352,13 @@ func scanCells(rows *sql.Rows) ([]Cell, error) {
 			trace, evidence  []byte
 			verdict          sql.NullString
 			intentID         sql.NullInt64
+			sourceTaskID     sql.NullInt64
 		)
 		if err := rows.Scan(&c.ID, &c.TaskID, &c.CellKey, &c.EndpointURL, &c.Method,
 			&c.VulnClass, &c.Eligibility, &c.Priority, &c.Bucket, &c.Direction,
 			&checklist, &hints, &c.HintsNote, &c.Reason, &trace,
-			&c.Status, &verdict, &evidence, &intentID, &c.Attempts, &c.LastError, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			&c.Status, &verdict, &evidence, &intentID, &c.Attempts, &c.LastError, &c.CreatedAt, &c.UpdatedAt,
+			&c.Origin, &sourceTaskID); err != nil {
 			return nil, err
 		}
 		if len(checklist) == 0 {
@@ -273,6 +382,10 @@ func scanCells(rows *sql.Rows) ([]Cell, error) {
 		if intentID.Valid {
 			v := intentID.Int64
 			c.IntentID = &v
+		}
+		if sourceTaskID.Valid {
+			v := sourceTaskID.Int64
+			c.SourceTaskID = &v
 		}
 		out = append(out, c)
 	}
@@ -384,7 +497,8 @@ func (s *CellStore) PendingGroups(taskID int64, maxGroups, maxPerGroup int) ([]C
 	rows, err := s.db.Query(`
 SELECT id, task_id, cell_key, endpoint_url, method, vulnclass, eligibility,
        priority, bucket, direction, checklist, hints, hints_note, reason, trace,
-       status, COALESCE(verdict,''), evidence, intent_id, attempts, last_error, created_at, updated_at
+       status, COALESCE(verdict,''), evidence, intent_id, attempts, last_error, created_at, updated_at,
+       COALESCE(origin,'matrix'), source_task_id
 FROM ca_cells
 WHERE task_id=$1 AND status='pending' AND intent_id IS NULL
 ORDER BY priority DESC, id ASC`, taskID)

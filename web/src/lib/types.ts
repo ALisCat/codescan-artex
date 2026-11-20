@@ -2117,6 +2117,8 @@ export interface CaCell {
   intent_id?: number;
   attempts: number;
   last_error?: string;
+  origin?: string;
+  source_task_id?: number;
 }
 
 export interface CaStats {

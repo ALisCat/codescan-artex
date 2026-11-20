@@ -151,6 +151,14 @@ const STATUS_META: Record<string, StatusMeta> = {
 // 图例顺序：先看"会派/结果"，再看"没派"
 const LEGEND = ["pending", "dispatched", "confirmed", "clean", "needs_more", "hold", "hold_low", "unverified", "failed", "na"];
 
+const ORIGIN_LABEL: Record<string, string> = {
+  inherited: "基线继承",
+  delta: "本次变更",
+  manual: "人工指定",
+  new: "矩阵新增",
+  removed: "已移除",
+};
+
 const STATUS_RANK: Record<string, number> = {
   confirmed: 8,
   needs_more: 7,
@@ -1208,6 +1216,14 @@ function CellBody({ c, taskId, onAudited }: { c: CaCell; taskId: string; onAudit
         <Icon className="size-3.5" />
         <span>{STATUS_META[c.status]?.hint}</span>
       </div>
+      {c.origin && c.origin !== "matrix" && (
+        <Section title="来源">
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="rounded border px-1 text-[10px]">{ORIGIN_LABEL[c.origin] ?? c.origin}</span>
+            {c.source_task_id && <span className="text-muted-foreground">任务 #{c.source_task_id}</span>}
+          </div>
+        </Section>
+      )}
       <Section title="方向">{c.direction || "—"}</Section>
       {c.reason && <Section title="判定依据 / 不适用原因">{c.reason}</Section>}
       {c.verdict && <Section title="结论">{c.verdict}</Section>}
