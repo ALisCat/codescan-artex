@@ -596,7 +596,7 @@ function DetailInner() {
           </Button>
           <Button variant="outline" onClick={() => setRunsOpen(true)}>
             <GitCommitHorizontalIcon className="size-4" />
-            审计运行链
+            审计记录
           </Button>
           <Button variant="outline" onClick={check} disabled={checking}>
             {checking ? <Loader2Icon className="size-4 animate-spin" /> : <RefreshCwIcon className="size-4" />}
@@ -612,7 +612,7 @@ function DetailInner() {
             <div className="min-w-0">
               <div className="font-medium text-sky-800 dark:text-sky-200">全量审计已发起</div>
               <div className="text-muted-foreground mt-0.5 text-xs">
-                运行 #{latestAudit.id} ·
+                审计批次 #{latestAudit.id} ·
                 {latestAudit.status === "fetching"
                   ? " 正在下载源码"
                   : latestAudit.status === "preparing"
@@ -629,7 +629,7 @@ function DetailInner() {
                       href={`/function/tasks/detail?id=${latestAudit.task_id}`}
                       className="text-foreground underline underline-offset-2"
                     >
-                      打开任务 #{latestAudit.task_id}
+                      执行任务 #{latestAudit.task_id}
                     </Link>
                   </>
                 )}
@@ -693,7 +693,7 @@ function DetailInner() {
               <GitCommitHorizontalIcon className="size-4" />
               分支状态
             </CardTitle>
-            <CardDescription>项目绑定仓库和分支；审计运行固定到该分支的具体 commit。</CardDescription>
+            <CardDescription>项目绑定仓库和分支；每次审计批次固定到该分支的具体 commit。</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -776,7 +776,7 @@ function DetailInner() {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium">增量审计已准备</span>
                   <Badge variant="outline" className="border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300">
-                    run #{preparedRun.id}
+                    审计批次 #{preparedRun.id}
                   </Badge>
                 </div>
                 <Button
@@ -1215,13 +1215,18 @@ function DetailInner() {
           <SheetHeader className="border-b px-4 py-3">
             <SheetTitle className="flex items-center gap-2">
               <GitCommitHorizontalIcon className="size-4" />
-              审计运行链
+              审计记录
             </SheetTitle>
             <SheetDescription>
-              全量建立基线，增量审计沿任务链向后推进；历史 target 不会被改写。
+              每次发起全量或增量审计会生成一条审计批次记录，并创建一个执行任务。
+              审计批次编号与任务编号不同。
             </SheetDescription>
           </SheetHeader>
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+            <div className="rounded-md border bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
+              <div><span className="font-medium text-foreground">审计批次</span>：一次审计发起记录。</div>
+              <div><span className="font-medium text-foreground">执行任务</span>：真正运行审计的 Agent 任务。</div>
+            </div>
             <div className="rounded-lg border p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -1246,7 +1251,7 @@ function DetailInner() {
               {latestAudit && (
                 <div className="text-muted-foreground mt-3 rounded-md border px-2 py-1.5 text-[11px]">
                   <div className="flex items-center justify-between gap-2">
-                    <span>最近运行 #{latestAudit.id}</span>
+                    <span>最近审计批次 #{latestAudit.id}</span>
                     <Badge variant="outline">{latestAudit.status}</Badge>
                   </div>
                   <div className="mt-1 font-mono">target {shortCommit(latestAudit.target_commit)}</div>
@@ -1266,7 +1271,7 @@ function DetailInner() {
             <div>
               <div className="mb-2 text-sm font-medium">运行记录</div>
               {runChain.length === 0 ? (
-                <div className="text-muted-foreground text-sm">还没有审计运行记录。</div>
+                <div className="text-muted-foreground text-sm">还没有审计记录。</div>
               ) : (
                 <div className="space-y-0">
                   {runChain.map((run, index) => {
@@ -1290,7 +1295,7 @@ function DetailInner() {
                         <div className="min-w-0 flex-1 rounded-lg border px-3 py-2">
                           <div className="flex flex-wrap items-center gap-2 text-xs">
                             <Badge variant="outline">{label}</Badge>
-                            <span className="font-medium">运行 #{run.id}</span>
+                            <span className="font-medium">审计批次 #{run.id}</span>
                             <span className="text-muted-foreground font-mono">
                               {shortCommit(run.base_commit)} → {shortCommit(run.target_commit)}
                             </span>
@@ -1310,7 +1315,7 @@ function DetailInner() {
                                 href={`/function/tasks/detail?id=${run.task_id}`}
                                 className="text-foreground inline-flex items-center gap-0.5 underline underline-offset-2"
                               >
-                                任务 #{run.task_id}
+                                执行任务 #{run.task_id}
                               </Link>
                             )}
                           </div>
