@@ -589,6 +589,10 @@ function DetailInner() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={startFullAudit} disabled={auditBusy}>
+            {auditBusy ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}
+            发起全量审计
+          </Button>
           <Button variant="outline" onClick={() => setRunsOpen(true)}>
             <GitCommitHorizontalIcon className="size-4" />
             审计运行链
