@@ -236,7 +236,7 @@ function DetailInner() {
         try {
           const run = await api.projectAudit(p.id, runID);
           setAudits((prev) => [run, ...prev.filter((r) => r.id !== run.id)]);
-          if (run.status === "ready" && run.task_id) {
+          if ((run.status === "ready" || run.status === "running") && run.task_id) {
             if (pollRef.current) window.clearInterval(pollRef.current);
             pollRef.current = null;
             toast.success("全量审计任务已创建");
@@ -512,7 +512,8 @@ function DetailInner() {
   const hasAudit = !!p.last_audited_commit;
   const trackedBranch = p.tracked_branch || p.default_branch || "main";
   const latestAudit = audits[0];
-  const auditBusy = starting || latestAudit?.status === "fetching";
+  const fullAuditActive = !!latestAudit && ["fetching", "preparing", "running", "ready", "review"].includes(latestAudit.status);
+  const auditBusy = starting || fullAuditActive;
   const targetCommit = preview?.target_commit || p.last_seen_commit;
   const reviewed = !!preview?.target_commit && p.last_reviewed_commit === preview.target_commit;
   const targetHasChanges = !!p.last_audited_commit && !!p.last_seen_commit && p.last_seen_commit !== p.last_audited_commit;
@@ -591,7 +592,7 @@ function DetailInner() {
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={startFullAudit} disabled={auditBusy}>
             {auditBusy ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}
-            发起全量审计
+            {starting ? "正在发起…" : fullAuditActive ? "全量审计进行中…" : "发起全量审计"}
           </Button>
           <Button variant="outline" onClick={() => setRunsOpen(true)}>
             <GitCommitHorizontalIcon className="size-4" />
@@ -603,6 +604,41 @@ function DetailInner() {
           </Button>
         </div>
       </div>
+
+      {fullAuditActive && latestAudit && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-sm">
+          <div className="flex min-w-0 items-start gap-2">
+            <Loader2Icon className="mt-0.5 size-4 shrink-0 animate-spin text-sky-600" />
+            <div className="min-w-0">
+              <div className="font-medium text-sky-800 dark:text-sky-200">全量审计已发起</div>
+              <div className="text-muted-foreground mt-0.5 text-xs">
+                运行 #{latestAudit.id} ·
+                {latestAudit.status === "fetching"
+                  ? " 正在下载源码"
+                  : latestAudit.status === "preparing"
+                    ? " 正在准备矩阵"
+                    : latestAudit.status === "running"
+                      ? " 任务已创建，审计进行中"
+                      : latestAudit.status === "ready"
+                        ? " 任务已就绪"
+                        : " 等待当前任务结束"}
+                {latestAudit.task_id && (
+                  <>
+                    {" · "}
+                    <Link
+                      href={`/function/tasks/detail?id=${latestAudit.task_id}`}
+                      className="text-foreground underline underline-offset-2"
+                    >
+                      打开任务 #{latestAudit.task_id}
+                    </Link>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="text-muted-foreground shrink-0 font-mono text-[11px]">target {shortCommit(latestAudit.target_commit)}</div>
+        </div>
+      )}
 
       {p.last_check_error && (
         <Card className="border-red-500/30 bg-red-500/5">

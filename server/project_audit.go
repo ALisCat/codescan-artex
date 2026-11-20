@@ -16,6 +16,15 @@ import (
 	"github.com/Autumn-27/artex/gitlabsrc"
 )
 
+func auditRunActive(status string) bool {
+	switch status {
+	case "fetching", "preparing", "running", "ready", "review":
+		return true
+	default:
+		return false
+	}
+}
+
 // POST /api/projects/{id}/audit
 //
 // v1 only implements mode=full. Incremental is deliberately rejected instead of
@@ -69,13 +78,19 @@ func (s *Server) startProjectAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// One in-flight run per project keeps source staging and baseline updates
-	// unambiguous. The UI can retry after the current run finishes or fails.
-	if latest, err := s.m.pg.CodeProjects().ListAudits(id, 1); err != nil {
+	// unambiguous. Check every recent run, not only the latest one: the first
+	// full audit may already have moved from fetching to running by the time a
+	// second request arrives.
+	if runs, err := s.m.pg.CodeProjects().ListAudits(id, 10); err != nil {
 		writeErr(w, 500, err.Error())
 		return
-	} else if len(latest) > 0 && latest[0].Status == "fetching" {
-		writeErr(w, 409, "该项目已有审计正在准备源码，请等待完成")
-		return
+	} else {
+		for _, run := range runs {
+			if auditRunActive(run.Status) {
+				writeErr(w, 409, "该项目已有审计正在进行，请等待当前任务结束后再发起")
+				return
+			}
+		}
 	}
 	c, err := s.gitlabClient()
 	if err != nil {

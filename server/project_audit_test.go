@@ -34,3 +34,16 @@ func TestNormalizeGitLabBaseURLStripsWebPath(t *testing.T) {
 		}
 	}
 }
+
+func TestAuditRunActive(t *testing.T) {
+	for _, status := range []string{"fetching", "preparing", "running", "ready", "review"} {
+		if !auditRunActive(status) {
+			t.Fatalf("status %q should be active", status)
+		}
+	}
+	for _, status := range []string{"", "prepared", "audited", "failed"} {
+		if auditRunActive(status) {
+			t.Fatalf("status %q should not be active", status)
+		}
+	}
+}
