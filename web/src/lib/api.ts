@@ -1153,13 +1153,17 @@ export const api = {
     runID: number,
     manualCells: ManualCellSpec[] = [],
     excludedCellKeys: string[] = [],
+    newApplicableCellKeys: string[] = [],
   ) =>
     post<{ audit: ProjectAuditRun; task_id: number }>(`/projects/${id}/incremental-runs/${runID}/start`, {
       manual_cells: manualCells,
       excluded_cell_keys: excludedCellKeys,
+      new_applicable_cell_keys: newApplicableCellKeys,
     }),
   projectGapCells: (id: number, runID: number) =>
     get<{ cells: IncrementalGapCell[] }>(`/projects/${id}/incremental-runs/${runID}/gap-cells`),
+  projectNewApplicableCells: (id: number, runID: number) =>
+    get<{ cells: IncrementalGapCell[] }>(`/projects/${id}/incremental-runs/${runID}/new-applicable-cells`),
   projectAudits: (id: number) =>
     get<{ audits: ProjectAuditRun[] | null }>(`/projects/${id}/audits`).then((r) => arr(r.audits)),
   projectAudit: (id: number, runID: number) => get<ProjectAuditRun>(`/projects/${id}/audits/${runID}`),

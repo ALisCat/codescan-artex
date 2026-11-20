@@ -222,7 +222,13 @@ func (s *Server) runIncrementalPreparation(run *db.ProjectAuditRun, p *db.CodePr
 	delta.DeltaCells = len(selection.Keys)
 	delta.Gaps = selection.Gaps
 	delta.Endpoints = selection.Endpoints
-	if err := s.m.pg.CodeProjects().MarkAuditPrepared(run.ID, relSource, delta.ChangedFiles, delta.DeltaCells, selection.Keys, selection.Gaps); err != nil {
+	baseByKey, err := s.loadBaseMatrix(*run.BaseTaskID)
+	if err != nil {
+		fail("读取基线矩阵失败：" + err.Error())
+		return
+	}
+	newApplicable := newApplicableCellKeys(body, baseByKey, selection.Keys)
+	if err := s.m.pg.CodeProjects().MarkAuditPrepared(run.ID, relSource, delta.ChangedFiles, delta.DeltaCells, selection.Keys, selection.Gaps, newApplicable); err != nil {
 		fail("记录增量准备结果失败：" + err.Error())
 		return
 	}
@@ -443,6 +449,31 @@ func selectDeltaCells(body importCellsBody, delta incrementalDelta) deltaSelecti
 	return selection
 }
 
+// newApplicableCellKeys returns target-matrix cells that are structurally
+// applicable but have no key in the base matrix and were not selected as delta.
+// They are shown to the reviewer before starting an incremental audit; nothing
+// is dispatched unless the reviewer explicitly includes them.
+func newApplicableCellKeys(full importCellsBody, base map[string]db.Cell, deltaKeys []string) []string {
+	delta := make(map[string]bool, len(deltaKeys))
+	for _, key := range deltaKeys {
+		delta[key] = true
+	}
+	keys := make([]string, 0)
+	for _, cell := range full.Tasks {
+		if cell.CellKey == "" || delta[cell.CellKey] {
+			continue
+		}
+		if strings.TrimSpace(cell.Eligibility) != "applicable" {
+			continue
+		}
+		if _, ok := base[cell.CellKey]; ok {
+			continue
+		}
+		keys = append(keys, cell.CellKey)
+	}
+	return keys
+}
+
 func cellTouchedByRanges(cell db.CellInput, ranges map[string][]lineRange) bool {
 	if len(ranges) == 0 {
 		return false
@@ -558,12 +589,69 @@ func (s *Server) listIncrementalGapCells(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, 200, map[string]any{"cells": cells})
 }
 
+// GET /api/projects/{id}/incremental-runs/{runID}/new-applicable-cells
+// Returns target-matrix cells that are applicable but absent from the base
+// matrix and not selected as delta. The reviewer may include them in the
+// incremental audit before starting it.
+func (s *Server) listIncrementalNewApplicableCells(w http.ResponseWriter, r *http.Request) {
+	projectID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || projectID <= 0 {
+		writeErr(w, 400, "项目 ID 不合法")
+		return
+	}
+	runID, err := strconv.ParseInt(r.PathValue("runID"), 10, 64)
+	if err != nil || runID <= 0 {
+		writeErr(w, 400, "增量运行 ID 不合法")
+		return
+	}
+	run, err := s.m.pg.CodeProjects().GetAudit(runID)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if run == nil || run.ProjectID != projectID {
+		writeErr(w, 404, "增量运行不存在")
+		return
+	}
+	if len(run.NewApplicableCellKeys) == 0 || strings.TrimSpace(run.SourcePath) == "" {
+		writeJSON(w, 200, map[string]any{"cells": []any{}})
+		return
+	}
+	sourceDir := filepath.Join(s.m.dir, filepath.FromSlash(run.SourcePath))
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(sourceDir), "matrix", "import.json"))
+	if err != nil {
+		writeErr(w, 409, "增量矩阵文件不存在，请重新准备")
+		return
+	}
+	var full importCellsBody
+	if err := json.Unmarshal(raw, &full); err != nil {
+		writeErr(w, 500, "解析增量矩阵失败："+err.Error())
+		return
+	}
+	wanted := make(map[string]bool, len(run.NewApplicableCellKeys))
+	for _, key := range run.NewApplicableCellKeys {
+		wanted[strings.TrimSpace(key)] = true
+	}
+	cells := []map[string]any{}
+	for _, cell := range full.Tasks {
+		if !wanted[cell.CellKey] {
+			continue
+		}
+		cells = append(cells, map[string]any{
+			"cell_key": cell.CellKey, "method": cell.Endpoint.Method,
+			"url": cell.Endpoint.URL, "vulnclass": cell.VulnClass,
+			"eligibility": cell.Eligibility, "reason": cell.Reason,
+		})
+	}
+	writeJSON(w, 200, map[string]any{"cells": cells})
+}
+
 // POST /api/projects/{id}/incremental-runs/{runID}/start
 //
 // A prepared run has already copied the target source and generated the target
 // matrix. Starting it must not download the archive again or regenerate the
-// matrix. Only the persisted delta cells are imported into the task, so the
-// unchanged target cells keep their base-task conclusions.
+// matrix. Delta cells plus reviewer-selected new applicable cells are imported
+// as dispatchable rows; unchanged target cells keep their base-task conclusions.
 func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Request) {
 	projectID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || projectID <= 0 {
@@ -625,10 +713,11 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var req struct {
-		AutoStart        *bool            `json:"auto_start"`
-		ManualCells      []manualCellSpec `json:"manual_cells"`
-		ManualCellKeys   []string         `json:"manual_cell_keys"`
-		ExcludedCellKeys []string         `json:"excluded_cell_keys"`
+		AutoStart             *bool            `json:"auto_start"`
+		ManualCells           []manualCellSpec `json:"manual_cells"`
+		ManualCellKeys        []string         `json:"manual_cell_keys"`
+		ExcludedCellKeys      []string         `json:"excluded_cell_keys"`
+		NewApplicableCellKeys []string         `json:"new_applicable_cell_keys"`
 	}
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&req)
@@ -682,8 +771,26 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 			deltaAllowed[key] = true
 		}
 	}
-	if len(deltaAllowed) == 0 && len(manualByEndpoint) == 0 {
-		writeErr(w, 409, "本次没有可审计的矩阵格，请保留自动类型或选择人工审计类型")
+	newAllowed := make(map[string]bool, len(run.NewApplicableCellKeys))
+	for _, key := range run.NewApplicableCellKeys {
+		if key = strings.TrimSpace(key); key != "" {
+			newAllowed[key] = true
+		}
+	}
+	newSelected := make(map[string]bool, len(req.NewApplicableCellKeys))
+	for _, key := range req.NewApplicableCellKeys {
+		key = strings.TrimSpace(key)
+		if key == "" || excluded[key] {
+			continue
+		}
+		if !newAllowed[key] {
+			writeErr(w, 409, "只能选择本次新增适用格："+key)
+			return
+		}
+		newSelected[key] = true
+	}
+	if len(deltaAllowed) == 0 && len(manualByEndpoint) == 0 && len(newSelected) == 0 {
+		writeErr(w, 409, "本次没有可审计的矩阵格，请保留自动类型、选择人工审计类型或勾选新增适用格")
 		return
 	}
 	templates := make(map[string]db.CellInput)
@@ -694,12 +801,20 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		}
 	}
 	body := fullBody
-	body.Tasks = make([]db.CellInput, 0, len(deltaAllowed)+len(manualByEndpoint))
+	body.Tasks = make([]db.CellInput, 0, len(deltaAllowed)+len(manualByEndpoint)+len(newSelected))
 	imported := make(map[string]bool)
 	manualFound := make(map[string]bool)
 	for _, cell := range fullBody.Tasks {
 		label := strings.TrimSpace(cell.Endpoint.Method + " " + cell.Endpoint.URL)
 		if deltaAllowed[cell.CellKey] {
+			body.Tasks = append(body.Tasks, cell)
+			imported[cell.CellKey] = true
+			continue
+		}
+		if newSelected[cell.CellKey] {
+			cell.Eligibility = "applicable"
+			cell.Hold = false
+			cell.Reason = "人工确认新增适用格"
 			body.Tasks = append(body.Tasks, cell)
 			imported[cell.CellKey] = true
 			continue
@@ -744,6 +859,12 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		}
 		body.Tasks = append(body.Tasks, cell)
 		imported[cellKey] = true
+	}
+	for key := range newSelected {
+		if !imported[key] {
+			writeErr(w, 409, "新增适用格不在目标矩阵中："+key)
+			return
+		}
 	}
 	if len(body.Tasks) == 0 {
 		writeErr(w, 409, "本次没有匹配到可导入的目标矩阵格")
@@ -808,7 +929,12 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		label := strings.TrimSpace(target.Endpoint.Method + " " + target.Endpoint.URL)
 		if selected, ok := selectedByKey[target.CellKey]; ok {
 			origin := "delta"
-			if manualByEndpoint[label] != "" && strings.EqualFold(strings.TrimSpace(target.VulnClass), manualByEndpoint[label]) {
+			if newSelected[target.CellKey] {
+				origin = "manual"
+				selected.Eligibility = "applicable"
+				selected.Hold = false
+				selected.Reason = "人工确认新增适用格"
+			} else if manualByEndpoint[label] != "" && strings.EqualFold(strings.TrimSpace(target.VulnClass), manualByEndpoint[label]) {
 				origin = "manual"
 				selected.Eligibility = "applicable"
 				selected.Hold = false
@@ -874,6 +1000,11 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 	for label, vuln := range manualByEndpoint {
 		manualList = append(manualList, label+" -> "+vuln)
 	}
+	confirmedNewList := make([]string, 0, len(newSelected))
+	for key := range newSelected {
+		confirmedNewList = append(confirmedNewList, key)
+	}
+	sort.Strings(confirmedNewList)
 	excludedList := make([]string, 0, len(excluded))
 	for key := range excluded {
 		excludedList = append(excludedList, key)
@@ -883,14 +1014,15 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		fmt.Sprintf("base=%s target=%s changed_files=%d", shortSHA(run.BaseCommit), shortSHA(run.TargetCommit), run.ChangedFiles),
 		"自动 delta 格：" + previewList(run.DeltaCellKeys, 24),
 		"人工指定格：" + previewList(manualList, 16),
+		"人工确认新增适用格：" + previewList(confirmedNewList, 16),
 		"人工否定格：" + previewList(excludedList, 16),
 		fmt.Sprintf("矩阵快照：inherited=%d new=%d removed=%d", inheritedCount, newCount, removedCount),
 		fmt.Sprintf("基线任务：#%d", *run.BaseTaskID),
 		"未覆盖接口：" + previewList(run.DeltaGaps, 16),
-		"规则：只审计 delta/manual 格，以及 worker 通过 report_observation 新增的 observation 格；inherited 只读，不重新审计；observation 格属于本次授权范围，不得以“只审计 delta/manual”为由压制；补派 add_intent 必须提供 summary + cell_keys 或 targets，禁止 new_string/old_string 参数。",
+		"规则：只审计 delta/manual 格、人工确认的新增适用格，以及 worker 通过 report_observation 新增的 observation 格；inherited 只读，不重新审计；observation 格属于本次授权范围，不得以“只审计 delta/manual”为由压制；补派 add_intent 必须提供 summary + cell_keys 或 targets，禁止 new_string/old_string 参数。",
 	}
 	desc := fmt.Sprintf("增量审计 GitLab 项目 %s（%s @ %s，base %s）", p.Path, projectBranch(p), shortSHA(run.TargetCommit), shortSHA(run.BaseCommit))
-	goal := "只审计本次增量矩阵格（变更文件影响的接口与漏洞类型）；未变更矩阵格的结论从基线任务只读继承，不重新审计、不发请求、不编译业务源码。\n\n" + strings.Join(contract, "\n")
+	goal := "只审计本次增量矩阵格（delta、人工指定/确认格、worker 观察格）；未变更矩阵格的结论从基线任务只读继承，不重新审计、不发请求、不编译业务源码。\n\n" + strings.Join(contract, "\n")
 	task, err := s.m.CreateTaskWithOptions(desc, goal, db.TaskCreateOptions{
 		Name:          fmt.Sprintf("%s · 增量审计 %s", p.Name, shortSHA(run.TargetCommit)),
 		CreatedBy:     &me.ID,

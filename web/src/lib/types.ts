@@ -1210,6 +1210,7 @@ export interface ProjectAuditRun {
   delta_cells: number;
   delta_cell_keys: string[];
   delta_gaps: string[];
+  new_applicable_cell_keys: string[];
   prepared_at?: string;
   status: "fetching" | "preparing" | "prepared" | "ready" | "review" | "audited" | "failed" | string;
   error_message: string;

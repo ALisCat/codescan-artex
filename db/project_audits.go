@@ -7,28 +7,29 @@ import (
 )
 
 type ProjectAuditRun struct {
-	ID            int64      `json:"id"`
-	ProjectID     int64      `json:"project_id"`
-	Mode          string     `json:"mode"`
-	BaseCommit    string     `json:"base_commit"`
-	TargetCommit  string     `json:"target_commit"`
-	BaseTaskID    *int64     `json:"base_task_id,omitempty"`
-	BaseRunID     *int64     `json:"base_run_id,omitempty"`
-	TaskID        *int64     `json:"task_id,omitempty"`
-	SourcePath    string     `json:"source_path,omitempty"`
-	ChangedFiles  int        `json:"changed_files"`
-	DeltaCells    int        `json:"delta_cells"`
-	DeltaCellKeys []string   `json:"delta_cell_keys"`
-	DeltaGaps     []string   `json:"delta_gaps"`
-	PreparedAt    *time.Time `json:"prepared_at,omitempty"`
-	Status        string     `json:"status"`
-	ErrorMessage  string     `json:"error_message"`
-	CreatedBy     *int64     `json:"created_by,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID                    int64      `json:"id"`
+	ProjectID             int64      `json:"project_id"`
+	Mode                  string     `json:"mode"`
+	BaseCommit            string     `json:"base_commit"`
+	TargetCommit          string     `json:"target_commit"`
+	BaseTaskID            *int64     `json:"base_task_id,omitempty"`
+	BaseRunID             *int64     `json:"base_run_id,omitempty"`
+	TaskID                *int64     `json:"task_id,omitempty"`
+	SourcePath            string     `json:"source_path,omitempty"`
+	ChangedFiles          int        `json:"changed_files"`
+	DeltaCells            int        `json:"delta_cells"`
+	DeltaCellKeys         []string   `json:"delta_cell_keys"`
+	DeltaGaps             []string   `json:"delta_gaps"`
+	NewApplicableCellKeys []string   `json:"new_applicable_cell_keys"`
+	PreparedAt            *time.Time `json:"prepared_at,omitempty"`
+	Status                string     `json:"status"`
+	ErrorMessage          string     `json:"error_message"`
+	CreatedBy             *int64     `json:"created_by,omitempty"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
 }
 
-const projectAuditCols = `id,project_id,mode,base_commit,target_commit,base_task_id,base_run_id,task_id,source_path,changed_files,delta_cells,delta_cell_keys,delta_gaps,prepared_at,status,error_message,created_by,created_at,updated_at`
+const projectAuditCols = `id,project_id,mode,base_commit,target_commit,base_task_id,base_run_id,task_id,source_path,changed_files,delta_cells,delta_cell_keys,delta_gaps,new_applicable_cell_keys,prepared_at,status,error_message,created_by,created_at,updated_at`
 
 func scanProjectAudit(sc interface{ Scan(...any) error }) (*ProjectAuditRun, error) {
 	var r ProjectAuditRun
@@ -39,8 +40,9 @@ func scanProjectAudit(sc interface{ Scan(...any) error }) (*ProjectAuditRun, err
 	var createdBy sql.NullInt64
 	var deltaCellKeys []byte
 	var deltaGaps []byte
+	var newApplicableCellKeys []byte
 	if err := sc.Scan(&r.ID, &r.ProjectID, &r.Mode, &r.BaseCommit, &r.TargetCommit, &baseTaskID, &baseRunID, &taskID,
-		&r.SourcePath, &r.ChangedFiles, &r.DeltaCells, &deltaCellKeys, &deltaGaps, &preparedAt,
+		&r.SourcePath, &r.ChangedFiles, &r.DeltaCells, &deltaCellKeys, &deltaGaps, &newApplicableCellKeys, &preparedAt,
 		&r.Status, &r.ErrorMessage, &createdBy, &r.CreatedAt, &r.UpdatedAt); err != nil {
 		return nil, err
 	}
@@ -59,6 +61,14 @@ func scanProjectAudit(sc interface{ Scan(...any) error }) (*ProjectAuditRun, err
 	}
 	if r.DeltaGaps == nil {
 		r.DeltaGaps = []string{}
+	}
+	if len(newApplicableCellKeys) > 0 {
+		if err := json.Unmarshal(newApplicableCellKeys, &r.NewApplicableCellKeys); err != nil {
+			return nil, err
+		}
+	}
+	if r.NewApplicableCellKeys == nil {
+		r.NewApplicableCellKeys = []string{}
 	}
 	if baseTaskID.Valid {
 		r.BaseTaskID = &baseTaskID.Int64
@@ -102,12 +112,15 @@ VALUES ($1,'incremental',$2,$3,$4,$5,'preparing',$6) RETURNING id`,
 	return s.GetAudit(id)
 }
 
-func (s *CodeProjectStore) MarkAuditPrepared(id int64, sourcePath string, changedFiles, deltaCells int, deltaCellKeys, deltaGaps []string) error {
+func (s *CodeProjectStore) MarkAuditPrepared(id int64, sourcePath string, changedFiles, deltaCells int, deltaCellKeys, deltaGaps, newApplicableCellKeys []string) error {
 	if deltaCellKeys == nil {
 		deltaCellKeys = []string{}
 	}
 	if deltaGaps == nil {
 		deltaGaps = []string{}
+	}
+	if newApplicableCellKeys == nil {
+		newApplicableCellKeys = []string{}
 	}
 	keys, err := json.Marshal(deltaCellKeys)
 	if err != nil {
@@ -117,10 +130,14 @@ func (s *CodeProjectStore) MarkAuditPrepared(id int64, sourcePath string, change
 	if err != nil {
 		return err
 	}
+	newKeys, err := json.Marshal(newApplicableCellKeys)
+	if err != nil {
+		return err
+	}
 	_, err = s.db.Exec(`
 UPDATE project_audit_runs SET source_path=$2, changed_files=$3, delta_cells=$4, delta_cell_keys=$5::jsonb,
-    delta_gaps=$6::jsonb, status='prepared', prepared_at=now(), updated_at=now() WHERE id=$1`,
-		id, sourcePath, changedFiles, deltaCells, keys, gaps)
+    delta_gaps=$6::jsonb, new_applicable_cell_keys=$7::jsonb, status='prepared', prepared_at=now(), updated_at=now() WHERE id=$1`,
+		id, sourcePath, changedFiles, deltaCells, keys, gaps, newKeys)
 	return err
 }
 

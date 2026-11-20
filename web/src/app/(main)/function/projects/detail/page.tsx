@@ -183,6 +183,8 @@ function DetailInner() {
   const [gapCells, setGapCells] = React.useState<IncrementalGapCell[]>([]);
   const [manualSelections, setManualSelections] = React.useState<Record<string, string>>({});
   const [rejectedRiskKeys, setRejectedRiskKeys] = React.useState<Set<string>>(new Set());
+  const [newApplicableCells, setNewApplicableCells] = React.useState<IncrementalGapCell[]>([]);
+  const [selectedNewKeys, setSelectedNewKeys] = React.useState<Set<string>>(new Set());
   const [detailsOpen, setDetailsOpen] = React.useState(false);
   const [incrementalTab, setIncrementalTab] = React.useState<"unreviewed" | "reviewed">("unreviewed");
   const [reviewDialogOpen, setReviewDialogOpen] = React.useState(false);
@@ -369,6 +371,7 @@ function DetailInner() {
         preparedRun.id,
         manualCells,
         [...rejectedRiskKeys],
+        [...selectedNewKeys],
       );
       setAudits((prev) => [res.audit, ...prev.filter((r) => r.id !== res.audit.id)]);
       toast.success("增量审计任务已创建");
@@ -413,6 +416,24 @@ function DetailInner() {
   const autoRiskRows = [...autoRiskByEndpoint.entries()]
     .map(([url, cells]) => ({ url, cells: cells.filter((cell) => !rejectedRiskKeys.has(cell.cellKey)) }))
     .filter((row) => row.cells.length > 0);
+  const newApplicableByEndpoint = new Map<string, IncrementalGapCell[]>();
+  for (const cell of newApplicableCells) {
+    const label = `${cell.method} ${cell.url}`;
+    const cells = newApplicableByEndpoint.get(label) ?? [];
+    cells.push(cell);
+    newApplicableByEndpoint.set(label, cells);
+  }
+  const newApplicableRows = [...newApplicableByEndpoint.entries()].map(([label, cells]) => ({
+    label,
+    method: cells[0]?.method ?? "",
+    url: cells[0]?.url ?? "",
+    cells,
+  }));
+  const manualSelected = Object.values(manualSelections).some((value) => value.trim() !== "");
+  const remainingDeltaKeys = (preparedRun?.delta_cell_keys ?? []).filter((key) => !rejectedRiskKeys.has(key));
+  const canStartIncremental =
+    !!preparedRun &&
+    (remainingDeltaKeys.length > 0 || manualSelected || selectedNewKeys.size > 0);
 
   React.useEffect(() => {
     if (!p || !preparedRun || preparedRun.delta_gaps.length === 0) {
@@ -433,6 +454,29 @@ function DetailInner() {
       })
       .catch(() => {
         if (alive) setGapCells([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [p, preparedRun]);
+
+  React.useEffect(() => {
+    if (!p || !preparedRun) {
+      setNewApplicableCells([]);
+      setSelectedNewKeys(new Set());
+      return;
+    }
+    let alive = true;
+    api
+      .projectNewApplicableCells(p.id, preparedRun.id)
+      .then((res) => {
+        if (alive) {
+          setNewApplicableCells(res.cells);
+          setSelectedNewKeys(new Set());
+        }
+      })
+      .catch(() => {
+        if (alive) setNewApplicableCells([]);
       });
     return () => {
       alive = false;
@@ -820,15 +864,10 @@ function DetailInner() {
                 <Button
                   size="sm"
                   onClick={startIncremental}
-                  disabled={
-                    startingIncremental ||
-                    (preparedRun.delta_cells <= 0 && Object.values(manualSelections).every((v) => !v))
-                  }
+                  disabled={startingIncremental || !canStartIncremental}
                 >
                   {startingIncremental ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}
-                  {preparedRun.delta_cells > 0 || Object.values(manualSelections).some(Boolean)
-                    ? "开始增量审计"
-                    : "请选择人工审计类型"}
+                  {canStartIncremental ? "开始增量审计" : "请选择审计范围"}
                 </Button>
               </div>
               <div className="text-muted-foreground mt-2 font-mono text-xs">
@@ -837,6 +876,8 @@ function DetailInner() {
               <div className="text-muted-foreground mt-1 text-xs">
                 {preparedRun.changed_files} 个变更文件 · 影响接口 {affectedEndpoints.size} 个，自动分析发现{" "}
                 {autoRiskEndpoints.size} 个接口可能存在风险，已录入矩阵；未变更格从基线任务只读继承。
+                {(preparedRun.new_applicable_cell_keys?.length ?? 0) > 0 &&
+                  ` 另有 ${preparedRun.new_applicable_cell_keys.length} 个新增适用格待人工确认。`}
               </div>
               {rejectedRiskKeys.size > 0 && (
                 <div className="text-muted-foreground mt-1 flex items-center gap-1 text-xs">
@@ -941,6 +982,85 @@ function DetailInner() {
                   </div>
                 )}
               </div>
+
+              {newApplicableRows.length > 0 && (
+                <div className="mt-3 overflow-hidden rounded-md border border-amber-500/30 bg-background/60">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/20 px-3 py-2">
+                    <div className="text-xs font-medium">
+                      新增适用格 · 人工确认
+                      <span className="text-muted-foreground ml-2 font-normal">
+                        已选 {selectedNewKeys.size} / {newApplicableCells.length}
+                      </span>
+                    </div>
+                    <div className="flex gap-1">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-2 text-[11px]"
+                        onClick={() => setSelectedNewKeys(new Set(newApplicableCells.map((cell) => cell.cell_key)))}
+                      >
+                        全选
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-2 text-[11px]"
+                        onClick={() => setSelectedNewKeys(new Set())}
+                      >
+                        清空
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="text-muted-foreground border-b border-border/60 px-3 py-1.5 text-[11px]">
+                    分析器认为可能适用，但没有命中本次变更行。默认不审计；勾选后纳入本次审计。
+                  </div>
+                  <div className="space-y-1.5 p-2">
+                    {newApplicableRows.map((row) => (
+                      <div
+                        key={row.label}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded border bg-background/60 px-2 py-1.5"
+                      >
+                        <span className="min-w-0 break-all font-mono text-[11px]">
+                          <span className="mr-1 font-sans text-muted-foreground">{row.method}</span>
+                          {row.url}
+                        </span>
+                        <div className="flex flex-wrap gap-1">
+                          {row.cells.map((cell) => {
+                            const checked = selectedNewKeys.has(cell.cell_key);
+                            return (
+                              <label
+                                key={cell.cell_key}
+                                className={`inline-flex cursor-pointer items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] ${
+                                  checked
+                                    ? "border-amber-500/50 bg-amber-500/10 text-amber-800 dark:text-amber-200"
+                                    : "border-border bg-background/60 text-muted-foreground"
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="size-3 accent-amber-600"
+                                  checked={checked}
+                                  onChange={() => {
+                                    setSelectedNewKeys((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(cell.cell_key)) next.delete(cell.cell_key);
+                                      else next.add(cell.cell_key);
+                                      return next;
+                                    });
+                                  }}
+                                />
+                                {vulnLabel(cell.vulnclass)}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {preparedRun.base_task_id && (
                 <div className="text-muted-foreground mt-2 text-xs">

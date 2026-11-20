@@ -229,3 +229,35 @@ func TestObservationAndEngineSeedRaceCreatesOneIntent(t *testing.T) {
 		t.Fatalf("intent count = %d, want exactly 1", intents)
 	}
 }
+
+func TestNewApplicableCellKeys(t *testing.T) {
+	mk := func(key, vuln, elig string) pgdb.CellInput {
+		c := pgdb.CellInput{CellKey: key, VulnClass: vuln, Eligibility: elig, Direction: "test"}
+		c.Endpoint.Method = "GET"
+		c.Endpoint.URL = key[:len(key)-len(vuln)-1]
+		return c
+	}
+	body := importCellsBody{Tasks: []pgdb.CellInput{
+		mk("/api/new:authz", "authz", "applicable"),                   // new applicable
+		mk("/api/new:xss", "xss", "not_applicable"),                   // new but N/A
+		mk("/api/base:authz", "authz", "applicable"),                  // inherited key
+		mk("/api/delta:sql-injection", "sql-injection", "applicable"), // delta
+		mk("repo://secrets:secrets", "secrets", "applicable"),         // repo-level new applicable
+	}}
+	base := map[string]pgdb.Cell{
+		"/api/base:authz": {CellKey: "/api/base:authz"},
+	}
+	got := newApplicableCellKeys(body, base, []string{"/api/delta:sql-injection"})
+	want := map[string]bool{
+		"/api/new:authz":         true,
+		"repo://secrets:secrets": true,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("keys = %#v, want %d", got, len(want))
+	}
+	for _, key := range got {
+		if !want[key] {
+			t.Fatalf("unexpected new applicable key %q (all=%#v)", key, got)
+		}
+	}
+}
