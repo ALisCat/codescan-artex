@@ -147,9 +147,9 @@ type Engine struct {
 	// resolve returns a task's dedicated planner/worker (wired by the server as the
 	// authoritative task-router). nil,nil means this task is deliberately unavailable
 	// (for example an exhausted failover chain) — there is no global-pair fallback.
-	resolve              func(t *Task) (*agent.Planner, *agent.Worker)
+	resolve func(t *Task) (*agent.Planner, *agent.Worker)
 	// 二开：矩阵格子补派（goalless 收尾前调用；nil = 非矩阵任务）
-	seedCells func(t *Task) (int, error)
+	seedCells            func(t *Task) (int, error)
 	resolveAuthoritative bool
 	// readiness reports whether a global LLM provider is configured — the signal behind
 	// Ready()/the llm_configured indicator. Wired once at startup; nil → not ready.
@@ -844,6 +844,25 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 		if e.isSettling(t.ID) {
 			return
 		}
+		// Matrix tasks have a deterministic completion criterion: every applicable
+		// cell is settled and no intent is still running. This must run even when
+		// an open goal exists; otherwise a leftover goal from goal decomposition
+		// can keep a fully settled audit task running indefinitely.
+		if e.isMatrixTask(t) {
+			if n, ok := e.unfinishedCells(t); ok && n == 0 {
+				if active, aerr := t.Store.HasActiveIntent(); aerr == nil && !active {
+					if won, err := e.m.SetTaskStatusGuarded(t.ID, "done"); err != nil {
+						log.Printf("[matrix] task %s 收尾落 done 失败: %v", t.ID, err)
+					} else if won {
+						e.emitActivity(t, db.Activity{Worker: "system", Kind: "text",
+							Summary: "矩阵格子已全部了结，任务结束"})
+					}
+					return
+				}
+			}
+		}
+
+		// goalless（人工直投）分支：任务已无 open 目标时 planner 不跑——跑了会重判
 		// goalless（人工直投）分支：任务已无 open 目标时 planner 不跑——跑了会重判
 		// met→cancelExec 杀掉用户经主 agent 直投的意图。是否结束改由 frontier 决定：
 		// 还有 open/running 意图 → 保持 running、静默等待；意图已全部跑干 → 落 done。
