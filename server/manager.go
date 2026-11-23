@@ -63,16 +63,17 @@ type Task struct {
 	DepartmentName string `json:"department_name,omitempty"`
 	CreatedBy      *int64 `json:"created_by,omitempty"`
 	// SourcePath 是任务源码目录（相对 data 根），来自上传的源码包；空=未上传源码。
-	SourcePath  string                 `json:"source_path,omitempty"`
-	MatrixState string                 `json:"matrix_state,omitempty"`
-	MatrixError string                 `json:"matrix_error,omitempty"`
-	FirstRunAt  int64                  `json:"first_run_at,omitempty"`
-	DeadlineAt  int64                  `json:"deadline_at,omitempty"`
-	Store       *pgdb.ExplorationStore `json:"-"`
-	Guard       *guard.Guard           `json:"-"`
-	notify      chan struct{}
-	lifecycleMu sync.RWMutex
-	llmMu       sync.RWMutex
+	SourcePath    string                 `json:"source_path,omitempty"`
+	MatrixState   string                 `json:"matrix_state,omitempty"`
+	MatrixError   string                 `json:"matrix_error,omitempty"`
+	AccessProfile json.RawMessage        `json:"access_profile,omitempty"`
+	FirstRunAt    int64                  `json:"first_run_at,omitempty"`
+	DeadlineAt    int64                  `json:"deadline_at,omitempty"`
+	Store         *pgdb.ExplorationStore `json:"-"`
+	Guard         *guard.Guard           `json:"-"`
+	notify        chan struct{}
+	lifecycleMu   sync.RWMutex
+	llmMu         sync.RWMutex
 
 	// pendingTriggers accumulates the concrete changes (worker done / finding) that
 	// fired planning rounds since the last one consumed them. The debounce coalesces
@@ -861,7 +862,7 @@ func taskFromPG(pt *pgdb.Task, store *pgdb.ExplorationStore, ic *intercept.Inter
 		CoverageEnabled: pt.CoverageEnabled,
 		DepartmentID:    cloneInt64Ptr(pt.DepartmentID), DepartmentName: pt.DepartmentName,
 		CreatedBy: cloneInt64Ptr(pt.CreatedBy), SourcePath: pt.SourcePath,
-		MatrixState: pt.MatrixState, MatrixError: pt.MatrixError,
+		MatrixState: pt.MatrixState, MatrixError: pt.MatrixError, AccessProfile: pt.AccessProfile,
 		FirstRunAt: unixOrZero(pt.FirstRunAt), DeadlineAt: unixOrZero(pt.DeadlineAt),
 		Store: store, Guard: guard.NewWithInterceptor(ic), notify: make(chan struct{}, 1),
 	}

@@ -44,6 +44,7 @@ import type {
   CodeProject,
   IncrementalGapCell,
   ManualCellSpec,
+  ProjectAccessProfile,
   ProjectAuditRun,
 } from "@/lib/types";
 
@@ -57,6 +58,36 @@ function fmtTime(v?: string) {
 
 function shortCommit(v: string) {
   return v ? v.slice(0, 12) : "—";
+}
+const DEFAULT_ACCESS_PROFILE: ProjectAccessProfile = {
+  multi_end: "unknown",
+  management_scope: "unknown",
+  client_scope: "unknown",
+  shared_management: "unknown",
+  notes: "",
+};
+
+function accessScopeLabel(v: string) {
+  switch (v) {
+    case "all":
+      return "查看全部数据";
+    case "department":
+      return "按部门/科室";
+    case "assigned":
+      return "按分配/归属";
+    case "self":
+      return "仅本人";
+    case "public":
+      return "公开/共享";
+    default:
+      return "不确定";
+  }
+}
+
+function accessChoiceLabel(v: string) {
+  if (v === "yes") return "是";
+  if (v === "no") return "否";
+  return "不确定";
 }
 
 const VULN_LABELS: Record<string, string> = {
@@ -176,6 +207,9 @@ function DetailInner() {
   const [selectedNewKeys, setSelectedNewKeys] = React.useState<Set<string>>(new Set());
   const [detailsOpen, setDetailsOpen] = React.useState(false);
   const [runsOpen, setRunsOpen] = React.useState(false);
+  const [accessOpen, setAccessOpen] = React.useState(false);
+  const [accessSaving, setAccessSaving] = React.useState(false);
+  const [accessForm, setAccessForm] = React.useState<ProjectAccessProfile>(DEFAULT_ACCESS_PROFILE);
   const [incrementalTab, setIncrementalTab] = React.useState<"unreviewed" | "reviewed">("unreviewed");
   const [reviewDialogOpen, setReviewDialogOpen] = React.useState(false);
   const [preview, setPreview] = React.useState<ChangePreview | null>(null);
@@ -384,6 +418,27 @@ function DetailInner() {
       toast.error("检查失败：" + (e as Error).message);
     } finally {
       setChecking(false);
+    }
+  }
+
+  function openAccessProfile() {
+    if (!p) return;
+    setAccessForm({ ...DEFAULT_ACCESS_PROFILE, ...(p.access_profile ?? {}) });
+    setAccessOpen(true);
+  }
+
+  async function saveAccessProfile() {
+    if (!p) return;
+    setAccessSaving(true);
+    try {
+      const profile = await api.updateProjectAccessProfile(p.id, accessForm);
+      setP({ ...p, access_profile: profile });
+      setAccessOpen(false);
+      toast.success("访问模型已保存；后续任务将使用该业务参考");
+    } catch (e) {
+      toast.error("保存访问模型失败：" + (e as Error).message);
+    } finally {
+      setAccessSaving(false);
     }
   }
 
@@ -680,6 +735,29 @@ function DetailInner() {
             <div className="text-muted-foreground text-xs">最近更新</div>
             <div className="mt-1">{fmtTime(p.updated_at)}</div>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <ShieldCheckIcon className="size-4" />
+            访问模型
+          </CardTitle>
+          <CardDescription>
+            用业务问题描述客户端和管理端的数据范围，worker 会把它作为 authz 判断参考。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs">
+            <span>多端：{accessChoiceLabel(p.access_profile?.multi_end ?? "unknown")}</span>
+            <span>管理端：{accessScopeLabel(p.access_profile?.management_scope ?? "unknown")}</span>
+            <span>客户端：{accessScopeLabel(p.access_profile?.client_scope ?? "unknown")}</span>
+            <span>客户端可访问管理端接口：{accessChoiceLabel(p.access_profile?.shared_management ?? "unknown")}</span>
+          </div>
+          <Button variant="outline" size="sm" onClick={openAccessProfile}>
+            编辑访问模型
+          </Button>
         </CardContent>
       </Card>
 
@@ -1333,6 +1411,87 @@ function DetailInner() {
           </div>
         </SheetContent>
       </Sheet>
+
+      <Dialog open={accessOpen} onOpenChange={setAccessOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>项目访问模型</DialogTitle>
+            <DialogDescription>
+              只回答业务层面的访问范围，不需要填写代码里的角色名或接口路径。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>本项目是否包含多个端？</Label>
+              <select
+                className="h-8 w-full rounded border bg-background px-2 text-sm"
+                value={accessForm.multi_end}
+                onChange={(e) => setAccessForm({ ...accessForm, multi_end: e.target.value as ProjectAccessProfile["multi_end"] })}
+              >
+                <option value="yes">是</option>
+                <option value="no">否</option>
+                <option value="unknown">不确定</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>管理端用户可以查看的数据范围</Label>
+              <select
+                className="h-8 w-full rounded border bg-background px-2 text-sm"
+                value={accessForm.management_scope}
+                onChange={(e) => setAccessForm({ ...accessForm, management_scope: e.target.value as ProjectAccessProfile["management_scope"] })}
+              >
+                <option value="all">可以查看全部数据</option>
+                <option value="department">只能查看所属部门/科室</option>
+                <option value="assigned">只能查看分配给自己的数据</option>
+                <option value="self">只能查看本人数据</option>
+                <option value="unknown">不确定</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>客户端用户可以查看的数据范围</Label>
+              <select
+                className="h-8 w-full rounded border bg-background px-2 text-sm"
+                value={accessForm.client_scope}
+                onChange={(e) => setAccessForm({ ...accessForm, client_scope: e.target.value as ProjectAccessProfile["client_scope"] })}
+              >
+                <option value="self">只能查看自己的数据</option>
+                <option value="public">可以查看公开/共享数据</option>
+                <option value="unknown">不确定</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>是否存在客户端可以访问的管理端接口？</Label>
+              <select
+                className="h-8 w-full rounded border bg-background px-2 text-sm"
+                value={accessForm.shared_management}
+                onChange={(e) => setAccessForm({ ...accessForm, shared_management: e.target.value as ProjectAccessProfile["shared_management"] })}
+              >
+                <option value="no">没有</option>
+                <option value="yes">有</option>
+                <option value="unknown">不确定</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="access-notes">业务补充说明（可选）</Label>
+              <Input
+                id="access-notes"
+                value={accessForm.notes}
+                onChange={(e) => setAccessForm({ ...accessForm, notes: e.target.value })}
+                placeholder="例如：共享排班接口允许客户端访问"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAccessOpen(false)} disabled={accessSaving}>
+              取消
+            </Button>
+            <Button onClick={() => void saveAccessProfile()} disabled={accessSaving}>
+              {accessSaving && <Loader2Icon className="size-4 animate-spin" />}
+              保存访问模型
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={reviewDialogOpen} onOpenChange={setReviewDialogOpen}>
         <DialogContent className="sm:max-w-md">

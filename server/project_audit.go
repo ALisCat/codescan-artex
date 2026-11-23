@@ -200,8 +200,9 @@ func (s *Server) runProjectFullAudit(run *db.ProjectAuditRun, p *db.CodeProject,
 	desc := fmt.Sprintf("审计 GitLab 项目 %s（%s @ %s）", p.Path, projectBranch(p), shortSHA(target))
 	goal := "对该项目源码进行全量静态代码审计，优先检查 Java 代码中的安全缺陷；结论必须有源码证据，不运行应用、不发请求、不编译业务源码。"
 	t, err := s.m.CreateTaskWithOptions(desc, goal, db.TaskCreateOptions{
-		Name:      fmt.Sprintf("%s · 全量审计 %s", p.Name, shortSHA(target)),
-		CreatedBy: &me.ID,
+		Name:          fmt.Sprintf("%s · 全量审计 %s", p.Name, shortSHA(target)),
+		CreatedBy:     &me.ID,
+		AccessProfile: p.AccessProfile,
 	})
 	if err != nil {
 		fail("创建审计任务失败：" + err.Error())

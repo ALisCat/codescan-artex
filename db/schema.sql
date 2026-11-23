@@ -534,6 +534,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     archived_at    TIMESTAMPTZ,
     deleted_at     TIMESTAMPTZ,
     completed_at   TIMESTAMPTZ,
+    access_profile JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -1599,6 +1600,7 @@ CREATE TRIGGER trg_task_dependencies_upd BEFORE UPDATE ON task_dependencies
 -- 任务矩阵准备状态：本地 zip / 仓库导入任务在后台生成矩阵时，禁止提前开跑。
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS matrix_state TEXT NOT NULL DEFAULT '';
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS matrix_error TEXT NOT NULL DEFAULT '';
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS access_profile JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 -- =====================================================================
 -- 代码源项目管理（GitLab 优先）
@@ -1624,6 +1626,7 @@ CREATE TABLE IF NOT EXISTS code_projects (
     last_check_error    TEXT NOT NULL DEFAULT '',
     status              TEXT NOT NULL DEFAULT 'active',
     created_by          BIGINT,
+    access_profile      JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -1639,6 +1642,7 @@ ALTER TABLE code_projects ADD COLUMN IF NOT EXISTS last_reviewed_commit TEXT NOT
 ALTER TABLE code_projects ADD COLUMN IF NOT EXISTS last_reviewed_at TIMESTAMPTZ;
 ALTER TABLE code_projects ADD COLUMN IF NOT EXISTS last_reviewed_by BIGINT;
 ALTER TABLE code_projects ADD COLUMN IF NOT EXISTS last_review_note TEXT NOT NULL DEFAULT '';
+ALTER TABLE code_projects ADD COLUMN IF NOT EXISTS access_profile JSONB NOT NULL DEFAULT '{}'::jsonb;
 UPDATE code_projects SET tracked_branch = COALESCE(NULLIF(default_branch,''), 'master')
 WHERE tracked_branch = '';
 CREATE UNIQUE INDEX IF NOT EXISTS ux_code_projects_path_branch ON code_projects(path, tracked_branch);

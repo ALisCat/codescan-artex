@@ -79,6 +79,9 @@ type Worker struct {
 	cellVerdict func(cellKey, verdict, reason string, evidence json.RawMessage) error
 	// 二开：结构化观察项补派回调（nil = 无矩阵上下文）
 	observation func(ObservationSpec) (ObservationResult, error)
+	// accessProfile returns the project business authorization reference for
+	// authz verdicts. It is worker-side context, not an analyzer rule.
+	accessProfile func() string
 	// injectConstraints resolves whether this task's operation constraints get
 	// injected into the worker system prompt. Read per run so the settings toggle
 	// takes effect without rebuilding the agent. nil = inject (default).
@@ -162,6 +165,9 @@ func (w *Worker) SetCellVerdict(fn func(cellKey, verdict, reason string, evidenc
 func (w *Worker) SetObservation(fn func(ObservationSpec) (ObservationResult, error)) {
 	w.observation = fn
 }
+
+// SetAccessProfile injects the project business access reference for authz cells.
+func (w *Worker) SetAccessProfile(fn func() string) { w.accessProfile = fn }
 
 func (w *Worker) SetRunTimeout(run time.Duration) {
 	w.runTimeout = run
@@ -900,6 +906,11 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	sysBody := workerSystem(w.proxyAddr, w.proxyCACert, w.workDir, runDir)
 	if w.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,worker 执行时严格遵守
+	}
+	if w.accessProfile != nil {
+		if ref := strings.TrimSpace(w.accessProfile()); ref != "" {
+			sysBody += "\n\n" + ref
+		}
 	}
 	// 意图块 → 意图锚定资产块 → 启动指令，依次追加到 system 尾部（与 constraintBlock 同一套追加法）。
 	sysBody += renderIntentTask(intent)

@@ -76,6 +76,7 @@ import type {
   SessionTokenUsage,
   Settings,
   CodeProject,
+  ProjectAccessProfile,
   GitLabBranch,
   GitLabProject,
   GitLabTestResult,
@@ -1145,6 +1146,10 @@ export const api = {
     post<CodeProject>(`/projects`, payload),
   checkProject: (id: number) => post<CodeProject>(`/projects/${id}/check`),
   deleteProject: (id: number) => del<{ ok: boolean }>(`/projects/${id}`),
+  projectAccessProfile: (id: number) =>
+    get<{ access_profile: ProjectAccessProfile }>(`/projects/${id}/access-profile`).then((r) => r.access_profile),
+  updateProjectAccessProfile: (id: number, profile: ProjectAccessProfile) =>
+    put<{ access_profile: ProjectAccessProfile }>(`/projects/${id}/access-profile`, profile).then((r) => r.access_profile),
   startProjectAudit: (id: number, mode: "full" | "incremental" = "full") =>
     post<{ audit: ProjectAuditRun; upload_id: string; state: string }>(`/projects/${id}/audit`, { mode }),
   prepareIncrementalAudit: (id: number) => post<ProjectAuditRun>(`/projects/${id}/incremental-prepare`),

@@ -58,9 +58,10 @@ type Task struct {
 	// CreatedBy 是创建者账号 id（nil = 历史任务/系统创建）。
 	CreatedBy *int64 `json:"created_by,omitempty"`
 	// SourcePath 是任务源码目录（相对 data 根的路径），上传源码包创建任务后写入。
-	SourcePath  string `json:"source_path,omitempty"`
-	MatrixState string `json:"matrix_state,omitempty"`
-	MatrixError string `json:"matrix_error,omitempty"`
+	SourcePath    string          `json:"source_path,omitempty"`
+	MatrixState   string          `json:"matrix_state,omitempty"`
+	MatrixError   string          `json:"matrix_error,omitempty"`
+	AccessProfile json.RawMessage `json:"access_profile"`
 }
 
 // TaskDeleteResult reports optional related-data cleanup performed in the same
@@ -172,7 +173,8 @@ type TaskCreateOptions struct {
 	// CreatedBy 是创建者账号 id（nil = 系统/编排创建）。
 	CreatedBy *int64
 	// SourcePath 是该任务的源码目录（相对 data 根），来自上传的源码包。
-	SourcePath string
+	SourcePath    string
+	AccessProfile json.RawMessage
 }
 
 // CreateTaskWithOptions creates an exploration, task, direct source relations,
@@ -213,6 +215,9 @@ VALUES ($1, 'fact', $2, 0, 'origin', 'system')`, expID, string(originPayload)); 
 	if opts.TimeoutSeconds < 0 {
 		opts.TimeoutSeconds = 0
 	}
+	if len(opts.AccessProfile) == 0 {
+		opts.AccessProfile = json.RawMessage(`{}`)
+	}
 	opts.PlanHeartbeatSeconds = normalizeHeartbeat(opts.PlanHeartbeatSeconds)
 	coverageEnabled := opts.CoverageEnabled == nil || *opts.CoverageEnabled
 	var categoryName string
@@ -242,6 +247,7 @@ VALUES ($1, 'fact', $2, 0, 'origin', 'system')`, expID, string(originPayload)); 
 		TimeoutSeconds: opts.TimeoutSeconds, PlanHeartbeatSeconds: opts.PlanHeartbeatSeconds,
 		CoverageEnabled: coverageEnabled,
 		DepartmentID:    opts.DepartmentID, CreatedBy: opts.CreatedBy, SourcePath: opts.SourcePath,
+		AccessProfile: opts.AccessProfile,
 	}
 	var deptName any
 	if opts.DepartmentID != nil {
@@ -257,9 +263,9 @@ VALUES ($1, 'fact', $2, 0, 'origin', 'system')`, expID, string(originPayload)); 
 		t.DepartmentName, _ = deptName.(string)
 	}
 	if err := tx.QueryRow(`
-INSERT INTO tasks(name, category_id, description, goal, exploration_id, llm_profile_id, active_llm_profile_id, timeout_seconds, plan_heartbeat_seconds, coverage_enabled, department_id, created_by, source_path)
-VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10,$11,$12)
-RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, description, goal, expID, active, opts.TimeoutSeconds, opts.PlanHeartbeatSeconds, coverageEnabled, opts.DepartmentID, opts.CreatedBy, opts.SourcePath).Scan(&t.ID, &t.Status, &t.Paused, &t.CreatedAt); err != nil {
+INSERT INTO tasks(name, category_id, description, goal, exploration_id, llm_profile_id, active_llm_profile_id, timeout_seconds, plan_heartbeat_seconds, coverage_enabled, department_id, created_by, source_path, access_profile)
+VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10,$11,$12,$13)
+RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, description, goal, expID, active, opts.TimeoutSeconds, opts.PlanHeartbeatSeconds, coverageEnabled, opts.DepartmentID, opts.CreatedBy, opts.SourcePath, string(opts.AccessProfile)).Scan(&t.ID, &t.Status, &t.Paused, &t.CreatedAt); err != nil {
 		return nil, err
 	}
 	if err := insertTaskRelations(tx, t.ID, opts.SourceTaskIDs); err != nil {
@@ -376,14 +382,21 @@ func insertTaskLLMProfiles(tx *sql.Tx, taskID int64, profileIDs []int64) error {
 const taskCols = `id, COALESCE(name,''), category_id,
 COALESCE((SELECT category.name FROM task_categories category WHERE category.id=tasks.category_id),''),
 description, goal, exploration_id, status, paused, queued, queued_at, COALESCE(queue_mode,''), llm_profile_id, active_llm_profile_id, COALESCE(parent_ref,''), pinned_at, created_at, completed_at, COALESCE(timeout_seconds,0), COALESCE(plan_heartbeat_seconds,300), COALESCE(coverage_enabled,true), first_run_at, deadline_at, department_id,
-COALESCE((SELECT dep.name FROM departments dep WHERE dep.id=tasks.department_id),''), created_by, COALESCE(source_path,''), COALESCE(matrix_state,''), COALESCE(matrix_error,'')`
+COALESCE((SELECT dep.name FROM departments dep WHERE dep.id=tasks.department_id),''), created_by, COALESCE(source_path,''), COALESCE(matrix_state,''), COALESCE(matrix_error,''), COALESCE(access_profile,'{}'::jsonb)`
 
 func scanTask(sc interface{ Scan(...any) error }) (*Task, error) {
 	var t Task
-	if err := sc.Scan(&t.ID, &t.Name, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.PlanHeartbeatSeconds, &t.CoverageEnabled, &t.FirstRunAt, &t.DeadlineAt, &t.DepartmentID, &t.DepartmentName, &t.CreatedBy, &t.SourcePath, &t.MatrixState, &t.MatrixError); err != nil {
+	var accessProfile []byte
+	if err := sc.Scan(&t.ID, &t.Name, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.PlanHeartbeatSeconds, &t.CoverageEnabled, &t.FirstRunAt, &t.DeadlineAt, &t.DepartmentID, &t.DepartmentName, &t.CreatedBy, &t.SourcePath, &t.MatrixState, &t.MatrixError, &accessProfile); err != nil {
 		return nil, err
 	}
 	t.Pinned = t.PinnedAt != nil
+	if len(accessProfile) > 0 {
+		t.AccessProfile = json.RawMessage(accessProfile)
+	}
+	if len(t.AccessProfile) == 0 {
+		t.AccessProfile = json.RawMessage(`{}`)
+	}
 	return &t, nil
 }
 

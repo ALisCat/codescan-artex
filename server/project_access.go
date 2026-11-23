@@ -1,0 +1,180 @@
+package server
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+)
+
+type projectAccessProfile struct {
+	MultiEnd         string `json:"multi_end"`
+	ManagementScope  string `json:"management_scope"`
+	ClientScope      string `json:"client_scope"`
+	SharedManagement string `json:"shared_management"`
+	Notes            string `json:"notes"`
+}
+
+func emptyAccessProfile() projectAccessProfile {
+	return projectAccessProfile{
+		MultiEnd:         "unknown",
+		ManagementScope:  "unknown",
+		ClientScope:      "unknown",
+		SharedManagement: "unknown",
+	}
+}
+
+func parseAccessProfile(raw json.RawMessage) projectAccessProfile {
+	p := emptyAccessProfile()
+	if len(raw) == 0 || string(raw) == "null" {
+		return p
+	}
+	_ = json.Unmarshal(raw, &p)
+	if p.MultiEnd == "" {
+		p.MultiEnd = "unknown"
+	}
+	if p.ManagementScope == "" {
+		p.ManagementScope = "unknown"
+	}
+	if p.ClientScope == "" {
+		p.ClientScope = "unknown"
+	}
+	if p.SharedManagement == "" {
+		p.SharedManagement = "unknown"
+	}
+	return p
+}
+
+func validChoice(v string, allowed ...string) bool {
+	for _, x := range allowed {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeAccessProfile(in projectAccessProfile) (projectAccessProfile, error) {
+	in.MultiEnd = strings.TrimSpace(in.MultiEnd)
+	in.ManagementScope = strings.TrimSpace(in.ManagementScope)
+	in.ClientScope = strings.TrimSpace(in.ClientScope)
+	in.SharedManagement = strings.TrimSpace(in.SharedManagement)
+	in.Notes = strings.TrimSpace(in.Notes)
+	if !validChoice(in.MultiEnd, "yes", "no", "unknown") {
+		return in, fmt.Errorf("multi_end 不合法")
+	}
+	if !validChoice(in.ManagementScope, "all", "department", "assigned", "self", "unknown") {
+		return in, fmt.Errorf("management_scope 不合法")
+	}
+	if !validChoice(in.ClientScope, "self", "public", "unknown") {
+		return in, fmt.Errorf("client_scope 不合法")
+	}
+	if !validChoice(in.SharedManagement, "yes", "no", "unknown") {
+		return in, fmt.Errorf("shared_management 不合法")
+	}
+	if len([]rune(in.Notes)) > 4000 {
+		return in, fmt.Errorf("notes 不能超过 4000 字")
+	}
+	return in, nil
+}
+
+func accessProfileBlock(raw json.RawMessage) string {
+	p := parseAccessProfile(raw)
+	if p.MultiEnd == "unknown" && p.ManagementScope == "unknown" && p.ClientScope == "unknown" && p.SharedManagement == "unknown" && p.Notes == "" {
+		return ""
+	}
+	label := func(v, yes, no string) string {
+		switch v {
+		case "yes":
+			return yes
+		case "no":
+			return no
+		default:
+			return "不确定"
+		}
+	}
+	scopeLabel := func(v string) string {
+		switch v {
+		case "all":
+			return "允许访问全部数据"
+		case "department":
+			return "只能访问所属部门/科室数据"
+		case "assigned":
+			return "只能访问分配给当前主体的数据"
+		case "self":
+			return "只能访问本人数据"
+		case "public":
+			return "公开/共享数据"
+		default:
+			return "不确定"
+		}
+	}
+	var b strings.Builder
+	b.WriteString("【项目访问模型（业务参考，不替代源码证据）】\n")
+	b.WriteString("- 多端系统：" + label(p.MultiEnd, "是", "否") + "\n")
+	b.WriteString("- 管理端数据范围：" + scopeLabel(p.ManagementScope) + "\n")
+	b.WriteString("- 客户端数据范围：" + scopeLabel(p.ClientScope) + "\n")
+	b.WriteString("- 客户端可访问的管理端接口：" + label(p.SharedManagement, "有", "没有") + "\n")
+	if p.Notes != "" {
+		b.WriteString("- 业务补充：" + p.Notes + "\n")
+	}
+	b.WriteString("\n判断规则：\n")
+	b.WriteString("- 管理端 scope=all：角色级校验存在且无对象级限制时，不因缺少 subject/resource 绑定而直接判定越权；仍必须检查代码证据。\n")
+	b.WriteString("- 管理端 scope=department/assigned/self：必须找到对应的部门、归属或分配条件；没有则按越权处理。\n")
+	b.WriteString("- 客户端 scope=self：必须有 principal 与资源的归属绑定；没有则按越权处理。\n")
+	b.WriteString("- scope=unknown 或接口端别无法判断：写 needs_more，不要猜业务允许。\n")
+	b.WriteString("- 若项目声明存在客户端可访问的管理端接口，按共享接口单独判断；不能把整个管理端范围改成公开。\n")
+	return b.String()
+}
+
+func (s *Server) getProjectAccessProfile(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeErr(w, 400, "项目 ID 不合法")
+		return
+	}
+	p, err := s.m.pg.CodeProjects().Get(id)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if p == nil {
+		writeErr(w, 404, "项目不存在")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"access_profile": parseAccessProfile(p.AccessProfile)})
+}
+
+func (s *Server) putProjectAccessProfile(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeErr(w, 400, "项目 ID 不合法")
+		return
+	}
+	p, err := s.m.pg.CodeProjects().Get(id)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if p == nil {
+		writeErr(w, 404, "项目不存在")
+		return
+	}
+	var in projectAccessProfile
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, 400, "请求格式不正确")
+		return
+	}
+	in, err = normalizeAccessProfile(in)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	raw, _ := json.Marshal(in)
+	if err := s.m.pg.CodeProjects().SetAccessProfile(id, raw); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"access_profile": in})
+}

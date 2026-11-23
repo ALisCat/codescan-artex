@@ -1068,6 +1068,14 @@ export interface GitLabBranch {
   };
 }
 
+export interface ProjectAccessProfile {
+  multi_end: "yes" | "no" | "unknown";
+  management_scope: "all" | "department" | "assigned" | "self" | "unknown";
+  client_scope: "self" | "public" | "unknown";
+  shared_management: "yes" | "no" | "unknown";
+  notes: string;
+}
+
 export interface CodeProject {
   id: number;
   name: string;
@@ -1087,6 +1095,7 @@ export interface CodeProject {
   last_checked_at?: string;
   last_check_error: string;
   status: string;
+  access_profile?: ProjectAccessProfile;
   created_by?: number | null;
   created_at: string;
   updated_at: string;

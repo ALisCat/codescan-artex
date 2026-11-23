@@ -2,32 +2,34 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 )
 
 type CodeProject struct {
-	ID                 int64      `json:"id"`
-	Name               string     `json:"name"`
-	Path               string     `json:"path"`
-	GitLabProjectID    int64      `json:"gitlab_project_id"`
-	WebURL             string     `json:"web_url"`
-	DefaultBranch      string     `json:"default_branch"`
-	TrackedBranch      string     `json:"tracked_branch"`
-	LastSeenCommit     string     `json:"last_seen_commit"`
-	LastAuditedCommit  string     `json:"last_audited_commit"`
-	LastAuditedTaskID  *int64     `json:"last_audited_task_id,omitempty"`
-	LastAuditedRunID   *int64     `json:"last_audited_run_id,omitempty"`
-	LastReviewedCommit string     `json:"last_reviewed_commit"`
-	LastReviewedAt     *time.Time `json:"last_reviewed_at,omitempty"`
-	LastReviewedBy     *int64     `json:"last_reviewed_by,omitempty"`
-	LastReviewNote     string     `json:"last_review_note"`
-	LastCheckedAt      *time.Time `json:"last_checked_at,omitempty"`
-	LastCheckError     string     `json:"last_check_error"`
-	Status             string     `json:"status"`
-	CreatedBy          *int64     `json:"created_by,omitempty"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
+	ID                 int64           `json:"id"`
+	Name               string          `json:"name"`
+	Path               string          `json:"path"`
+	GitLabProjectID    int64           `json:"gitlab_project_id"`
+	WebURL             string          `json:"web_url"`
+	DefaultBranch      string          `json:"default_branch"`
+	TrackedBranch      string          `json:"tracked_branch"`
+	LastSeenCommit     string          `json:"last_seen_commit"`
+	LastAuditedCommit  string          `json:"last_audited_commit"`
+	LastAuditedTaskID  *int64          `json:"last_audited_task_id,omitempty"`
+	LastAuditedRunID   *int64          `json:"last_audited_run_id,omitempty"`
+	LastReviewedCommit string          `json:"last_reviewed_commit"`
+	LastReviewedAt     *time.Time      `json:"last_reviewed_at,omitempty"`
+	LastReviewedBy     *int64          `json:"last_reviewed_by,omitempty"`
+	LastReviewNote     string          `json:"last_review_note"`
+	LastCheckedAt      *time.Time      `json:"last_checked_at,omitempty"`
+	LastCheckError     string          `json:"last_check_error"`
+	Status             string          `json:"status"`
+	AccessProfile      json.RawMessage `json:"access_profile"`
+	CreatedBy          *int64          `json:"created_by,omitempty"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
 }
 
 type CodeProjectStore struct{ db *DB }
@@ -36,7 +38,7 @@ func (d *DB) CodeProjects() *CodeProjectStore { return &CodeProjectStore{db: d} 
 
 const codeProjectCols = `id,name,path,gitlab_project_id,web_url,default_branch,tracked_branch,
 last_seen_commit,last_audited_commit,last_audited_task_id,last_audited_run_id,last_reviewed_commit,last_reviewed_at,last_reviewed_by,last_review_note,
-last_checked_at,last_check_error,status,created_by,created_at,updated_at`
+last_checked_at,last_check_error,status,COALESCE(access_profile,'{}'::jsonb),created_by,created_at,updated_at`
 
 func scanCodeProject(sc interface{ Scan(...any) error }) (*CodeProject, error) {
 	var p CodeProject
@@ -46,9 +48,10 @@ func scanCodeProject(sc interface{ Scan(...any) error }) (*CodeProject, error) {
 	var reviewedBy sql.NullInt64
 	var auditedTaskID sql.NullInt64
 	var auditedRunID sql.NullInt64
+	var accessProfile []byte
 	if err := sc.Scan(&p.ID, &p.Name, &p.Path, &p.GitLabProjectID, &p.WebURL, &p.DefaultBranch, &p.TrackedBranch,
 		&p.LastSeenCommit, &p.LastAuditedCommit, &auditedTaskID, &auditedRunID, &p.LastReviewedCommit, &reviewedAt, &reviewedBy, &p.LastReviewNote,
-		&checked, &p.LastCheckError, &p.Status,
+		&checked, &p.LastCheckError, &p.Status, &accessProfile,
 		&createdBy, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, err
 	}
@@ -69,6 +72,12 @@ func scanCodeProject(sc interface{ Scan(...any) error }) (*CodeProject, error) {
 	}
 	if createdBy.Valid {
 		p.CreatedBy = &createdBy.Int64
+	}
+	if len(accessProfile) > 0 {
+		p.AccessProfile = json.RawMessage(accessProfile)
+	}
+	if len(p.AccessProfile) == 0 {
+		p.AccessProfile = json.RawMessage(`{}`)
 	}
 	return &p, nil
 }
@@ -178,6 +187,14 @@ UPDATE code_projects SET last_audited_commit=$2,
     last_seen_commit=COALESCE(NULLIF($2,''), last_seen_commit),
     last_reviewed_commit=$2, last_reviewed_at=now(), last_reviewed_by=NULL,
     last_review_note='审计完成', updated_at=now() WHERE id=$1`, id, commit, taskID, runID)
+	return err
+}
+
+func (s *CodeProjectStore) SetAccessProfile(id int64, raw json.RawMessage) error {
+	if len(raw) == 0 {
+		raw = json.RawMessage(`{}`)
+	}
+	_, err := s.db.Exec(`UPDATE code_projects SET access_profile=$2::jsonb, updated_at=now() WHERE id=$1`, id, string(raw))
 	return err
 }
 

@@ -1027,6 +1027,7 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		Name:          fmt.Sprintf("%s · 增量审计 %s", p.Name, shortSHA(run.TargetCommit)),
 		CreatedBy:     &me.ID,
 		SourceTaskIDs: []int64{*run.BaseTaskID},
+		AccessProfile: p.AccessProfile,
 	})
 	if err != nil {
 		writeErr(w, 500, "创建增量任务失败："+err.Error())
@@ -1264,6 +1265,7 @@ func (s *Server) startIncrementalReviewTask(w http.ResponseWriter, r *http.Reque
 		Name:          fmt.Sprintf("%s · 人工复核 %s", p.Name, shortSHA(run.TargetCommit)),
 		CreatedBy:     &me.ID,
 		SourceTaskIDs: []int64{*run.BaseTaskID},
+		AccessProfile: p.AccessProfile,
 	})
 	if err != nil {
 		writeErr(w, 500, "创建人工复核任务失败："+err.Error())
