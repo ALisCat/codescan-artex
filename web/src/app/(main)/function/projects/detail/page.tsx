@@ -702,6 +702,10 @@ function DetailInner() {
                   ? "已有审计进行中"
                   : "发起全量审计"}
           </Button>
+          <Button variant="outline" onClick={openAccessProfile}>
+            <ShieldCheckIcon className="size-4" />
+            访问模型
+          </Button>
           <Button variant="outline" onClick={() => setRunsOpen(true)}>
             <GitCommitHorizontalIcon className="size-4" />
             审计记录
@@ -791,30 +795,6 @@ function DetailInner() {
             <div className="text-muted-foreground text-xs">最近更新</div>
             <div className="mt-1">{fmtTime(p.updated_at)}</div>
           </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <ShieldCheckIcon className="size-4" />
-            访问模型
-          </CardTitle>
-          <CardDescription>
-            用业务问题描述客户端和管理端的数据范围，worker 会把它作为 authz 判断参考。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs">
-            <span>模式：{p.access_profile?.mode === "advanced" ? "精细" : "简单"}</span>
-            <span>多端：{accessChoiceLabel(p.access_profile?.multi_end ?? "unknown")}</span>
-            <span>管理端：{accessScopeLabel(p.access_profile?.management_scope ?? "unknown")}</span>
-            <span>客户端：{accessScopeLabel(p.access_profile?.client_scope ?? "unknown")}</span>
-            <span>客户端可访问管理端接口：{accessChoiceLabel(p.access_profile?.shared_management ?? "unknown")}</span>
-          </div>
-          <Button variant="outline" size="sm" onClick={openAccessProfile}>
-            编辑访问模型
-          </Button>
         </CardContent>
       </Card>
 
@@ -1564,6 +1544,18 @@ function DetailInner() {
                 <div className="text-muted-foreground text-[11px]">
                   填写角色、资源、操作和数据范围规则。未覆盖的接口会由 worker 返回 needs_more。
                 </div>
+                <details className="rounded-md border bg-muted/20 px-3 py-2 text-xs">
+                  <summary className="cursor-pointer font-medium">字段说明与可选值</summary>
+                  <div className="text-muted-foreground mt-2 space-y-2">
+                    <p><code>roles</code>：角色名到资源规则的映射。角色名必须和代码中的权限角色一致，例如 <code>ADMIN</code>、<code>CLIENT</code>。</p>
+                    <p><code>resource</code>：资源标识，例如 <code>resource</code>、<code>patient</code>、<code>order</code>。</p>
+                    <p><code>read / list / create / update / delete / export / approve / assign</code>：对资源执行的操作。模板中的 <code>read</code> 表示查看单条资源，<code>list</code> 表示查看列表；其他操作按名称理解。</p>
+                    <p><code>scope</code>：数据范围，可选 <code>all</code>（全部）、<code>department</code>（部门/科室）、<code>assigned</code>（分配给当前主体）、<code>self</code>（本人）、<code>public</code>（公开/共享）、<code>unknown</code>（不确定）。</p>
+                    <p><code>endpoints[].match</code>：HTTP 方法和路径，例如 <code>GET /api/admin/resource/{id}</code>。</p>
+                    <p><code>endpoints[].resource / action / roles</code>：接口对应的资源、操作和角色；用于明确接口属于哪条规则。</p>
+                    <p>未出现在规则中的角色、资源、操作或接口，worker 应返回 <code>needs_more</code>，不能自行猜测业务允许。</p>
+                  </div>
+                </details>
               </div>
             )}
             <div className="space-y-1.5">
