@@ -41,6 +41,14 @@ function shortCommit(c: string) {
   return c ? c.slice(0, 8) : "—";
 }
 
+function fmtTime(v?: string) {
+  if (!v) return "—";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return v;
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 function projectState(p: CodeProject) {
   if (p.last_check_error) return { label: "检查失败", tone: "danger" as const };
   if (!p.last_audited_commit) return { label: "未审计", tone: "muted" as const };
@@ -88,6 +96,10 @@ export default function ProjectsPage() {
   const [checking, setChecking] = React.useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = React.useState<CodeProject | null>(null);
   const [deleting, setDeleting] = React.useState(false);
+  const [statusFilter, setStatusFilter] = React.useState("all");
+  const [sortBy, setSortBy] = React.useState("updated");
+  const [page, setPage] = React.useState(1);
+  const pageSize = 20;
 
   const load = React.useCallback(() => {
     setLoading(true);
@@ -106,11 +118,37 @@ export default function ProjectsPage() {
 
   const filtered = React.useMemo(() => {
     const needle = q.trim().toLowerCase();
-    if (!needle) return projects;
-    return projects.filter(
-      (p) => p.name.toLowerCase().includes(needle) || p.path.toLowerCase().includes(needle),
+    let list = projects.filter(
+      (p) =>
+        (!needle ||
+          p.name.toLowerCase().includes(needle) ||
+          p.path.toLowerCase().includes(needle)) &&
+        (statusFilter === "all" || projectState(p).label === statusFilter),
     );
-  }, [projects, q]);
+    list = [...list].sort((a, b) => {
+      switch (sortBy) {
+        case "name":
+          return a.name.localeCompare(b.name);
+        case "audited":
+          return (b.last_audited_commit || "").localeCompare(a.last_audited_commit || "");
+        case "status":
+          return projectState(a).label.localeCompare(projectState(b).label);
+        default:
+          return (b.updated_at || "").localeCompare(a.updated_at || "");
+      }
+    });
+    return list;
+  }, [projects, q, statusFilter, sortBy]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const paged = filtered.slice((page - 1) * pageSize, page * pageSize);
+
+  React.useEffect(() => {
+    setPage(1);
+  }, [q, statusFilter, sortBy]);
+
+  React.useEffect(() => {
+    if (page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
 
   const configured = !!settings?.gitlab_configured;
 
@@ -299,6 +337,29 @@ export default function ProjectsPage() {
             className="pl-9"
           />
         </div>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-36">
+            <SelectValue placeholder="状态" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部状态</SelectItem>
+            <SelectItem value="未审计">未审计</SelectItem>
+            <SelectItem value="已审计">已审计</SelectItem>
+            <SelectItem value="有更新">有更新</SelectItem>
+            <SelectItem value="检查失败">检查失败</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={sortBy} onValueChange={setSortBy}>
+          <SelectTrigger className="w-36">
+            <SelectValue placeholder="排序" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="updated">最近更新</SelectItem>
+            <SelectItem value="name">项目名称</SelectItem>
+            <SelectItem value="audited">上次审计</SelectItem>
+            <SelectItem value="status">状态</SelectItem>
+          </SelectContent>
+        </Select>
         <Button variant="outline" size="sm" onClick={load} disabled={loading}>
           <RefreshCwIcon className={loading ? "size-4 animate-spin" : "size-4"} />
           刷新
@@ -335,66 +396,72 @@ export default function ProjectsPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {filtered.map((p) => (
-            <Card key={p.id} className="group transition-colors hover:border-foreground/20">
-              <CardHeader className="gap-2">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <CardTitle className="truncate text-base">{p.name}</CardTitle>
-                    <CardDescription className="truncate font-mono text-xs">{p.path}</CardDescription>
-                  </div>
-                  <StateBadge project={p} />
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-                  <span className="inline-flex items-center gap-1">
-                    <GitBranchIcon className="size-3.5" />
-                    {p.tracked_branch || p.default_branch || "main"}
-                  </span>
-                  <span>HEAD {shortCommit(p.last_seen_commit)}</span>
-                  <span>上次审计 {shortCommit(p.last_audited_commit)}</span>
-                </div>
-                {p.last_check_error && (
-                  <div className="line-clamp-2 text-xs text-red-600 dark:text-red-400">{p.last_check_error}</div>
-                )}
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button variant="outline" size="sm" onClick={() => check(p.id)} disabled={checking === p.id}>
-                    {checking === p.id ? (
-                      <Loader2Icon className="size-3.5 animate-spin" />
-                    ) : (
-                      <CheckCircle2Icon className="size-3.5" />
-                    )}
-                    检查更新
-                  </Button>
-                  <Button variant="ghost" size="sm" asChild>
-                    <Link href={`/function/projects/detail?id=${p.id}`}>
-                      详情
-                      <ArrowRightIcon className="size-3.5" />
-                    </Link>
-                  </Button>
-                  {p.web_url && (
-                    <Button variant="ghost" size="sm" asChild>
-                      <a href={p.web_url} target="_blank" rel="noreferrer">
-                        <ExternalLinkIcon className="size-3.5" />
-                        GitLab
-                      </a>
-                    </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                    onClick={() => setDeleteTarget(p)}
-                  >
-                    <Trash2Icon className="size-3.5" />
-                    删除
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+        <div className="overflow-hidden rounded-lg border bg-background">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] text-left text-sm">
+              <thead className="bg-muted/40 text-muted-foreground text-xs">
+                <tr>
+                  <th className="px-3 py-2 font-medium">项目 / 仓库</th>
+                  <th className="px-3 py-2 font-medium">分支</th>
+                  <th className="px-3 py-2 font-medium">状态</th>
+                  <th className="px-3 py-2 font-medium">审计基线</th>
+                  <th className="px-3 py-2 font-medium">目标 HEAD</th>
+                  <th className="px-3 py-2 font-medium">最近更新</th>
+                  <th className="px-3 py-2 text-right font-medium">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paged.map((p) => (
+                  <tr key={p.id} className="hover:bg-muted/30 border-t">
+                    <td className="max-w-[22rem] px-3 py-2.5">
+                      <Link href={`/function/projects/detail?id=${p.id}`} className="block min-w-0">
+                        <div className="truncate font-medium hover:underline">{p.name}</div>
+                        <div className="text-muted-foreground truncate font-mono text-[11px]">{p.path}</div>
+                      </Link>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <span className="inline-flex items-center gap-1 font-mono text-xs">
+                        <GitBranchIcon className="size-3.5" />
+                        {p.tracked_branch || p.default_branch || "main"}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5"><StateBadge project={p} /></td>
+                    <td className="px-3 py-2.5 font-mono text-xs">{shortCommit(p.last_audited_commit)}</td>
+                    <td className="px-3 py-2.5 font-mono text-xs">{shortCommit(p.last_seen_commit)}</td>
+                    <td className="text-muted-foreground px-3 py-2.5 text-xs">{fmtTime(p.updated_at)}</td>
+                    <td className="px-3 py-2.5">
+                      <div className="flex flex-wrap justify-end gap-1">
+                        <Button variant="outline" size="sm" onClick={() => check(p.id)} disabled={checking === p.id}>
+                          {checking === p.id ? <Loader2Icon className="size-3.5 animate-spin" /> : <CheckCircle2Icon className="size-3.5" />}
+                          检查
+                        </Button>
+                        <Button variant="ghost" size="sm" asChild>
+                          <Link href={`/function/projects/detail?id=${p.id}`}>详情<ArrowRightIcon className="size-3.5" /></Link>
+                        </Button>
+                        {p.web_url && (
+                          <Button variant="ghost" size="icon-sm" asChild>
+                            <a href={p.web_url} target="_blank" rel="noreferrer" title="GitLab">
+                              <ExternalLinkIcon className="size-3.5" />
+                            </a>
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive" onClick={() => setDeleteTarget(p)} title="删除">
+                          <Trash2Icon className="size-3.5" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t px-3 py-2 text-xs">
+            <span className="text-muted-foreground">共 {filtered.length} 个项目 · 第 {page}/{pageCount} 页</span>
+            <div className="flex items-center gap-1">
+              <Button variant="outline" size="xs" onClick={() => setPage((v) => Math.max(1, v - 1))} disabled={page <= 1}>上一页</Button>
+              <Button variant="outline" size="xs" onClick={() => setPage((v) => Math.min(pageCount, v + 1))} disabled={page >= pageCount}>下一页</Button>
+            </div>
+          </div>
         </div>
       )}
 
