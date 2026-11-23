@@ -144,21 +144,6 @@ function ChangeFileRow({ file }: { file: ChangeFile }) {
             ))}
           </div>
         )}
-        {(file.endpoints ?? []).length > 0 && (
-          <div className="space-y-1 text-xs">
-            <div className="font-medium">本文件中的接口（候选）</div>
-            <div className="text-muted-foreground text-[11px]">
-              按本文件注解解析，不代表这些方法都发生了变更；实际范围以增量准备后的 delta 为准。
-            </div>
-            {(file.endpoints ?? []).map((ep, i) => (
-              <div key={i} className="flex flex-wrap items-center gap-2 font-mono">
-                <Badge variant="outline">{ep.method}</Badge>
-                <span>{ep.path}</span>
-                <span className="text-muted-foreground">:{ep.line}</span>
-              </div>
-            ))}
-          </div>
-        )}
         {file.diff ? (
           <pre className="bg-muted/40 max-h-96 overflow-auto rounded-md border p-3 text-xs leading-relaxed">
             {file.diff}
@@ -543,7 +528,6 @@ function DetailInner() {
   const activeCommits =
     activeScope?.commits ?? (incrementalTab === "unreviewed" ? preview?.review_commits ?? [] : []);
   const activeFiles = activeScope?.files ?? [];
-  const activeEndpoints = activeScope?.endpoints ?? [];
   const activeWarnings = activeScope?.warnings ?? [];
   const activeBase = activeScope?.base_commit || (incrementalTab === "unreviewed" ? preview?.review_base_commit : preview?.base_commit);
   const activeTarget = activeScope?.target_commit || preview?.target_commit;
@@ -1196,21 +1180,6 @@ function DetailInner() {
                     )}
                   </div>
 
-                  {activeEndpoints.length > 0 && (
-                    <div className="space-y-2">
-                      <div className="text-sm font-medium">全部变更文件中的接口（候选）</div>
-                      <div className="text-muted-foreground text-[11px]">
-                        这是汇总后的 Controller 注解候选，不代表这些接口的方法都被改动。实际重审范围以增量准备后的 delta 矩阵为准。
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {activeEndpoints.map((ep, i) => (
-                          <Badge key={`${ep.method}:${ep.path}:${i}`} variant="outline" className="font-mono">
-                            {ep.method} {ep.path}
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
 
                   {Array.from(new Set([...activeWarnings, ...preview.warnings])).length > 0 && (
                     <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-700 dark:text-amber-300">
