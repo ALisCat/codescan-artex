@@ -1544,7 +1544,7 @@ function DetailInner() {
                 <div className="text-muted-foreground text-[11px]">
                   填写角色、资源、操作和数据范围规则。未覆盖的接口会由 worker 返回 needs_more。
                 </div>
-                <details className="rounded-md border bg-muted/20 px-3 py-2 text-xs">
+                <details className="overflow-hidden rounded-md border bg-muted/20 px-3 py-2 text-xs">
                   <summary className="cursor-pointer font-medium">字段说明与可选值</summary>
                   <div className="text-muted-foreground mt-2 space-y-2">
                     <p><code>roles</code>：角色名到资源规则的映射。角色名必须和代码中的权限角色一致，例如 <code>ADMIN</code>、<code>CLIENT</code>。</p>
