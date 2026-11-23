@@ -16,6 +16,7 @@ import {
   RefreshCwIcon,
   SearchIcon,
   Settings2Icon,
+  Trash2Icon,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -85,6 +86,8 @@ export default function ProjectsPage() {
   const [availableError, setAvailableError] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const [checking, setChecking] = React.useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = React.useState<CodeProject | null>(null);
+  const [deleting, setDeleting] = React.useState(false);
 
   const load = React.useCallback(() => {
     setLoading(true);
@@ -234,6 +237,21 @@ export default function ProjectsPage() {
     }
   }
 
+  async function removeProject() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await api.deleteProject(deleteTarget.id);
+      setProjects((prev) => prev.filter((p) => p.id !== deleteTarget.id));
+      toast.success(`已删除项目：${deleteTarget.name}`);
+      setDeleteTarget(null);
+    } catch (e) {
+      toast.error("删除项目失败：" + (e as Error).message);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="flex flex-1 flex-col gap-4 md:gap-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -364,6 +382,15 @@ export default function ProjectsPage() {
                       </a>
                     </Button>
                   )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => setDeleteTarget(p)}
+                  >
+                    <Trash2Icon className="size-3.5" />
+                    删除
+                  </Button>
                 </div>
               </CardContent>
             </Card>
@@ -530,6 +557,35 @@ export default function ProjectsPage() {
                 添加
               </Button>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setDeleteTarget(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>删除项目</DialogTitle>
+            <DialogDescription className="break-words">
+              确认删除项目「{deleteTarget?.name}」？相关审计记录会一并移除，已创建的执行任务不会自动删除。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-md border bg-muted/30 px-3 py-2 font-mono text-xs">
+            {deleteTarget?.path}
+            <span className="text-muted-foreground"> · {deleteTarget?.tracked_branch || deleteTarget?.default_branch || "main"}</span>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+              取消
+            </Button>
+            <Button variant="destructive" onClick={() => void removeProject()} disabled={deleting}>
+              {deleting && <Loader2Icon className="size-4 animate-spin" />}
+              删除项目
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
