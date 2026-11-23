@@ -67,6 +67,40 @@ const DEFAULT_ACCESS_PROFILE: ProjectAccessProfile = {
   shared_management: "unknown",
   notes: "",
 };
+const ADVANCED_ACCESS_TEMPLATE = JSON.stringify(
+  {
+    roles: {
+      ADMIN: {
+        resource: {
+          read: "all",
+          list: "all",
+        },
+      },
+      CLIENT: {
+        resource: {
+          read: "self",
+        },
+      },
+    },
+    endpoints: [
+      {
+        match: "GET /api/admin/resource/{id}",
+        resource: "resource",
+        action: "read",
+        roles: ["ADMIN"],
+      },
+      {
+        match: "GET /api/client/resource/{id}",
+        resource: "resource",
+        action: "read",
+        roles: ["CLIENT"],
+      },
+    ],
+  },
+  null,
+  2,
+);
+
 
 function accessScopeLabel(v: string) {
   switch (v) {
@@ -427,7 +461,11 @@ function DetailInner() {
     if (!p) return;
     const next = { ...DEFAULT_ACCESS_PROFILE, ...(p.access_profile ?? {}) };
     setAccessForm(next);
-    setAccessAdvancedJSON(JSON.stringify(next.advanced ?? {}, null, 2));
+    setAccessAdvancedJSON(
+      next.mode === "advanced" && next.advanced && Object.keys(next.advanced).length > 0
+        ? JSON.stringify(next.advanced, null, 2)
+        : ADVANCED_ACCESS_TEMPLATE,
+    );
     setAccessOpen(true);
   }
 
@@ -1445,7 +1483,13 @@ function DetailInner() {
               <select
                 className="h-8 w-full rounded border bg-background px-2 text-sm"
                 value={accessForm.mode}
-                onChange={(e) => setAccessForm({ ...accessForm, mode: e.target.value as ProjectAccessProfile["mode"] })}
+                onChange={(e) => {
+                  const mode = e.target.value as ProjectAccessProfile["mode"];
+                  setAccessForm({ ...accessForm, mode });
+                  if (mode === "advanced" && accessAdvancedJSON.trim() === "{}") {
+                    setAccessAdvancedJSON(ADVANCED_ACCESS_TEMPLATE);
+                  }
+                }}
               >
                 <option value="simple">简单模式：只回答业务问题</option>
                 <option value="advanced">精细模式：填写角色、资源和范围规则</option>
@@ -1506,7 +1550,18 @@ function DetailInner() {
               </>
             ) : (
               <div className="space-y-1.5">
-                <Label htmlFor="access-advanced">精细规则 JSON</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="access-advanced">精细规则 JSON</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7"
+                    onClick={() => setAccessAdvancedJSON(ADVANCED_ACCESS_TEMPLATE)}
+                  >
+                    插入模板
+                  </Button>
+                </div>
                 <textarea
                   id="access-advanced"
                   className="min-h-64 w-full rounded border bg-background p-2 font-mono text-xs"
