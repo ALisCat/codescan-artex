@@ -1453,7 +1453,8 @@ function DetailInner() {
       </Sheet>
 
       <Dialog open={accessOpen} onOpenChange={setAccessOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-lg overflow-hidden! p-0">
+          <div className="max-h-[90dvh] overflow-y-auto p-4">
           <DialogHeader>
             <DialogTitle>项目访问模型</DialogTitle>
             <DialogDescription>
@@ -1601,6 +1602,7 @@ function DetailInner() {
               保存访问模型
             </Button>
           </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 
