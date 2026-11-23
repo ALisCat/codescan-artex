@@ -191,6 +191,15 @@ func (s *Server) listTaskUploads(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for _, up := range rows {
+		// 任务被删除时 consumed_by 会被 FK 置空，但 upload 行仍可能保留。
+		// 如果 staging 源码已经随任务删除或迁移，恢复出来只会得到一个无法
+		// 创建任务的空记录，因此列开放上传时按磁盘实际存在性过滤。
+		if strings.TrimSpace(up.SourcePath) == "" {
+			continue
+		}
+		if fi, statErr := os.Stat(up.SourcePath); statErr != nil || !fi.IsDir() {
+			continue
+		}
 		// created_by 为 NULL（属主账号已删）的行只对管理员可见，避免无主上传
 		// 被他人查看或消费。
 		if me != nil && !me.IsAdmin && (up.CreatedBy == nil || *up.CreatedBy != me.ID) {

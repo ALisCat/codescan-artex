@@ -709,6 +709,13 @@ DELETE FROM assets a USING deletable d WHERE a.id=d.id`, id, expID)
 	}
 	// llm_usage (the token metering ledger) is intentionally NOT deleted with the
 	// task — it is kept as historical accounting even after the task is gone.
+	// task_uploads.consumed_by uses ON DELETE SET NULL, which would leave a
+	// reusable-looking upload row behind after the task disappears. The source
+	// tree has already been moved into the task and is being deleted with it, so
+	// remove the consumed upload row in the same transaction.
+	if _, err := tx.Exec(`DELETE FROM task_uploads WHERE consumed_by=$1`, id); err != nil {
+		return result, err
+	}
 	if _, err := tx.Exec(`DELETE FROM tasks WHERE id=$1`, id); err != nil {
 		return result, err
 	}
