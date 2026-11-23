@@ -1550,17 +1550,9 @@ function DetailInner() {
               </>
             ) : (
               <div className="space-y-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <Label htmlFor="access-advanced">精细规则 JSON</Label>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-7"
-                    onClick={() => setAccessAdvancedJSON(ADVANCED_ACCESS_TEMPLATE)}
-                  >
-                    插入模板
-                  </Button>
+                <Label htmlFor="access-advanced">精细规则 JSON</Label>
+                <div className="text-muted-foreground text-[11px]">
+                  以下仅是结构示例，需要按实际角色、资源、接口和数据范围修改。
                 </div>
                 <textarea
                   id="access-advanced"
