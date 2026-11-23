@@ -20,14 +20,13 @@ func TestChatUnavailableReasonDistinguishesStates(t *testing.T) {
 	td := t.TempDir()
 	s := New(context.Background(), m, td, td, td)
 
-	// Start from a clean profile table; other tests in the shared DB may have left rows.
+	// This test needs an empty profile table for its first assertion. Do not
+	// delete profiles from a shared developer database: doing so destroys the
+	// operator's real LLM configuration. Only run the destructive case on an
+	// isolated/empty test database; otherwise skip it.
 	existing, _ := m.pg.ListProfiles()
-	for _, p := range existing {
-		if p.IsDefault {
-			// The active profile cannot be deleted directly; clear the flag first.
-			_, _ = m.pg.Exec(`UPDATE llm_profiles SET is_default=false WHERE id=$1`, p.ID)
-		}
-		_ = m.pg.DeleteProfile(p.ID)
+	if len(existing) > 0 {
+		t.Skip("shared database has LLM profiles; skipping destructive empty-profile assertion")
 	}
 
 	if reason := s.chatUnavailableReason(); !strings.Contains(reason, "尚未配置") {
