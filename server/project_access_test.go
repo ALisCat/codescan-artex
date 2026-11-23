@@ -33,3 +33,18 @@ func TestNormalizeAccessProfile(t *testing.T) {
 		t.Fatal("invalid management scope accepted")
 	}
 }
+
+func TestAdvancedAccessProfile(t *testing.T) {
+	raw := json.RawMessage(`{"mode":"advanced","multi_end":"yes","management_scope":"unknown","client_scope":"unknown","shared_management":"unknown","advanced":{"roles":{"DOCTOR":{"patient":{"read":"all"}}}}}`)
+	p, err := normalizeAccessProfile(parseAccessProfile(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Mode != "advanced" {
+		t.Fatalf("mode = %q", p.Mode)
+	}
+	block := accessProfileBlock(raw)
+	if !strings.Contains(block, "精细模式") || !strings.Contains(block, `"DOCTOR"`) {
+		t.Fatalf("advanced block missing rules:\n%s", block)
+	}
+}

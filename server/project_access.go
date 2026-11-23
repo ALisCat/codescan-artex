@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,15 +10,18 @@ import (
 )
 
 type projectAccessProfile struct {
-	MultiEnd         string `json:"multi_end"`
-	ManagementScope  string `json:"management_scope"`
-	ClientScope      string `json:"client_scope"`
-	SharedManagement string `json:"shared_management"`
-	Notes            string `json:"notes"`
+	Mode             string          `json:"mode"`
+	MultiEnd         string          `json:"multi_end"`
+	ManagementScope  string          `json:"management_scope"`
+	ClientScope      string          `json:"client_scope"`
+	SharedManagement string          `json:"shared_management"`
+	Advanced         json.RawMessage `json:"advanced,omitempty"`
+	Notes            string          `json:"notes"`
 }
 
 func emptyAccessProfile() projectAccessProfile {
 	return projectAccessProfile{
+		Mode:             "simple",
 		MultiEnd:         "unknown",
 		ManagementScope:  "unknown",
 		ClientScope:      "unknown",
@@ -31,6 +35,9 @@ func parseAccessProfile(raw json.RawMessage) projectAccessProfile {
 		return p
 	}
 	_ = json.Unmarshal(raw, &p)
+	if p.Mode == "" {
+		p.Mode = "simple"
+	}
 	if p.MultiEnd == "" {
 		p.MultiEnd = "unknown"
 	}
@@ -56,11 +63,30 @@ func validChoice(v string, allowed ...string) bool {
 }
 
 func normalizeAccessProfile(in projectAccessProfile) (projectAccessProfile, error) {
+	in.Mode = strings.TrimSpace(in.Mode)
+	if in.Mode == "" {
+		in.Mode = "simple"
+	}
 	in.MultiEnd = strings.TrimSpace(in.MultiEnd)
 	in.ManagementScope = strings.TrimSpace(in.ManagementScope)
 	in.ClientScope = strings.TrimSpace(in.ClientScope)
 	in.SharedManagement = strings.TrimSpace(in.SharedManagement)
 	in.Notes = strings.TrimSpace(in.Notes)
+	if !validChoice(in.Mode, "simple", "advanced") {
+		return in, fmt.Errorf("mode 不合法")
+	}
+	if in.Mode == "advanced" {
+		if len(in.Advanced) == 0 || string(in.Advanced) == "null" {
+			return in, fmt.Errorf("精细模式需要填写 advanced 规则")
+		}
+		var obj map[string]any
+		if err := json.Unmarshal(in.Advanced, &obj); err != nil {
+			return in, fmt.Errorf("advanced 必须是合法 JSON 对象")
+		}
+		if len(obj) == 0 {
+			return in, fmt.Errorf("advanced 不能为空对象")
+		}
+	}
 	if !validChoice(in.MultiEnd, "yes", "no", "unknown") {
 		return in, fmt.Errorf("multi_end 不合法")
 	}
@@ -81,6 +107,14 @@ func normalizeAccessProfile(in projectAccessProfile) (projectAccessProfile, erro
 
 func accessProfileBlock(raw json.RawMessage) string {
 	p := parseAccessProfile(raw)
+	if p.Mode == "advanced" && len(p.Advanced) > 0 && string(p.Advanced) != "null" {
+		var pretty bytes.Buffer
+		if err := json.Indent(&pretty, p.Advanced, "", "  "); err != nil {
+			pretty.Write(p.Advanced)
+		}
+		return "【项目访问模型（精细模式，业务参考，不替代源码证据）】\n" + pretty.String() +
+			"\n\n判断规则：优先按上述资源/角色/数据范围规则判断；规则未覆盖的接口或角色写 needs_more，不要猜业务允许。\n"
+	}
 	if p.MultiEnd == "unknown" && p.ManagementScope == "unknown" && p.ClientScope == "unknown" && p.SharedManagement == "unknown" && p.Notes == "" {
 		return ""
 	}

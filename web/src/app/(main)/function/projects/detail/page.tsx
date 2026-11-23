@@ -60,6 +60,7 @@ function shortCommit(v: string) {
   return v ? v.slice(0, 12) : "—";
 }
 const DEFAULT_ACCESS_PROFILE: ProjectAccessProfile = {
+  mode: "simple",
   multi_end: "unknown",
   management_scope: "unknown",
   client_scope: "unknown",
@@ -210,6 +211,7 @@ function DetailInner() {
   const [accessOpen, setAccessOpen] = React.useState(false);
   const [accessSaving, setAccessSaving] = React.useState(false);
   const [accessForm, setAccessForm] = React.useState<ProjectAccessProfile>(DEFAULT_ACCESS_PROFILE);
+  const [accessAdvancedJSON, setAccessAdvancedJSON] = React.useState("{}");
   const [incrementalTab, setIncrementalTab] = React.useState<"unreviewed" | "reviewed">("unreviewed");
   const [reviewDialogOpen, setReviewDialogOpen] = React.useState(false);
   const [preview, setPreview] = React.useState<ChangePreview | null>(null);
@@ -423,15 +425,31 @@ function DetailInner() {
 
   function openAccessProfile() {
     if (!p) return;
-    setAccessForm({ ...DEFAULT_ACCESS_PROFILE, ...(p.access_profile ?? {}) });
+    const next = { ...DEFAULT_ACCESS_PROFILE, ...(p.access_profile ?? {}) };
+    setAccessForm(next);
+    setAccessAdvancedJSON(JSON.stringify(next.advanced ?? {}, null, 2));
     setAccessOpen(true);
   }
 
   async function saveAccessProfile() {
     if (!p) return;
+    let payload = accessForm;
+    if (accessForm.mode === "advanced") {
+      try {
+        const parsed = JSON.parse(accessAdvancedJSON);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          toast.error("精细规则必须填写 JSON 对象");
+          return;
+        }
+        payload = { ...accessForm, advanced: parsed as Record<string, unknown> };
+      } catch {
+        toast.error("精细规则不是合法 JSON");
+        return;
+      }
+    }
     setAccessSaving(true);
     try {
-      const profile = await api.updateProjectAccessProfile(p.id, accessForm);
+      const profile = await api.updateProjectAccessProfile(p.id, payload);
       setP({ ...p, access_profile: profile });
       setAccessOpen(false);
       toast.success("访问模型已保存；后续任务将使用该业务参考");
@@ -750,6 +768,7 @@ function DetailInner() {
         </CardHeader>
         <CardContent className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs">
+            <span>模式：{p.access_profile?.mode === "advanced" ? "精细" : "简单"}</span>
             <span>多端：{accessChoiceLabel(p.access_profile?.multi_end ?? "unknown")}</span>
             <span>管理端：{accessScopeLabel(p.access_profile?.management_scope ?? "unknown")}</span>
             <span>客户端：{accessScopeLabel(p.access_profile?.client_scope ?? "unknown")}</span>
@@ -1422,6 +1441,19 @@ function DetailInner() {
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-1.5">
+              <Label>配置模式</Label>
+              <select
+                className="h-8 w-full rounded border bg-background px-2 text-sm"
+                value={accessForm.mode}
+                onChange={(e) => setAccessForm({ ...accessForm, mode: e.target.value as ProjectAccessProfile["mode"] })}
+              >
+                <option value="simple">简单模式：只回答业务问题</option>
+                <option value="advanced">精细模式：填写角色、资源和范围规则</option>
+              </select>
+            </div>
+            {accessForm.mode === "simple" ? (
+              <>
+            <div className="space-y-1.5">
               <Label>本项目是否包含多个端？</Label>
               <select
                 className="h-8 w-full rounded border bg-background px-2 text-sm"
@@ -1471,6 +1503,22 @@ function DetailInner() {
                 <option value="unknown">不确定</option>
               </select>
             </div>
+              </>
+            ) : (
+              <div className="space-y-1.5">
+                <Label htmlFor="access-advanced">精细规则 JSON</Label>
+                <textarea
+                  id="access-advanced"
+                  className="min-h-64 w-full rounded border bg-background p-2 font-mono text-xs"
+                  value={accessAdvancedJSON}
+                  onChange={(e) => setAccessAdvancedJSON(e.target.value)}
+                  spellCheck={false}
+                />
+                <div className="text-muted-foreground text-[11px]">
+                  填写角色、资源、操作和数据范围规则。未覆盖的接口会由 worker 返回 needs_more。
+                </div>
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label htmlFor="access-notes">业务补充说明（可选）</Label>
               <Input
