@@ -89,7 +89,8 @@ type ToolSet struct {
 	// Wired for workers; nil elsewhere → falls back to notify (bare wake).
 	notifyFinding func(intentID int64, summary string)
 	// 二开：矩阵任务的补派守卫。返回 (allowed, reason)，nil = 不限制。
-	matrixGuard func(IntentSpec) (bool, string)
+	matrixGuard  func(IntentSpec) (bool, string)
+	intentOrigin string
 	// 二开：矩阵任务的结构化 intent 解析器；把 cell_keys/targets 注入 cases/hints。
 	matrixIntentResolver func(IntentSpec) (*ResolvedIntent, error)
 	// 二开：矩阵完成门禁。pending/dispatched 数量；seed 用于自动补派 pending 格。
@@ -142,6 +143,9 @@ func (t *ToolSet) SetNotifyFinding(fn func(int64, string)) { t.notifyFinding = f
 
 // SetMatrixGuard 注入矩阵补派守卫（额度/范围限制）。
 func (t *ToolSet) SetMatrixGuard(fn func(IntentSpec) (bool, string)) { t.matrixGuard = fn }
+
+// SetIntentOrigin labels intents created by this tool surface (planner, mainagent).
+func (t *ToolSet) SetIntentOrigin(origin string) { t.intentOrigin = origin }
 
 // SetMatrixIntentResolver 注入矩阵结构化 intent 解析器。
 func (t *ToolSet) SetMatrixIntentResolver(fn func(IntentSpec) (*ResolvedIntent, error)) {
@@ -1180,7 +1184,11 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 			payload = resolved.Payload
 		}
 	}
-	id, err := t.ts.AddIntent(payload, priority, anchors, "planner")
+	origin := strings.TrimSpace(t.intentOrigin)
+	if origin == "" {
+		origin = "planner"
+	}
+	id, err := t.ts.AddIntent(payload, priority, anchors, origin)
 	if err != nil {
 		return 0, err
 	}

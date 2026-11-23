@@ -862,6 +862,31 @@ func (e *Engine) plannerLoop(ctx context.Context, t *Task) {
 			}
 		}
 
+		// Matrix recovery must run even while goals remain open. A blocked matrix
+		// intent may have requeued its cell, but the planner path historically only
+		// seeded cells in the goalless branch. Re-seed idle pending cells and reclaim
+		// stale dispatched cells before any planner round can create a parallel plan.
+		if e.isMatrixTask(t) {
+			if n, ok := e.unfinishedCells(t); ok && n > 0 {
+				if active, aerr := t.Store.HasActiveIntent(); aerr == nil && !active {
+					seeded := 0
+					if e.seedCells != nil {
+						seeded, _ = e.seedCells(t)
+					}
+					if seeded == 0 {
+						if id, err := strconv.ParseInt(t.ID, 10, 64); err == nil {
+							if n, err := e.m.PG().Cells().RequeueStale(id); err == nil && n > 0 {
+								log.Printf("[matrix] task %s 回收 %d 个僵尸格子", t.ID, n)
+								if e.seedCells != nil {
+									_, _ = e.seedCells(t)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
 		// goalless（人工直投）分支：任务已无 open 目标时 planner 不跑——跑了会重判
 		// goalless（人工直投）分支：任务已无 open 目标时 planner 不跑——跑了会重判
 		// met→cancelExec 杀掉用户经主 agent 直投的意图。是否结束改由 frontier 决定：

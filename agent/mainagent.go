@@ -30,9 +30,11 @@ type MainAgent struct {
 	webSearch       WebSearchOpts                          // 搜索后端配置（默认关闭，平台不出网）
 	workDir         string                                 // shared work dir (surfaced in prompt as artifact-output target)
 	steerWork       func(intentID int64, msg string) error // engine callback: steer a running work (nil = off)
-	nonStreamingFn  func() bool                            // resolver: use non-streaming (Complete) path? (nil = streaming)
-	noaEnabledFn    func() bool                            // resolver: use experimental noa compaction? (nil = off)
-	maxTokensFn     func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
+	matrixGuard     func(IntentSpec) (bool, string)
+	matrixResolver  func(IntentSpec) (*ResolvedIntent, error)
+	nonStreamingFn  func() bool // resolver: use non-streaming (Complete) path? (nil = streaming)
+	noaEnabledFn    func() bool // resolver: use experimental noa compaction? (nil = off)
+	maxTokensFn     func() int  // resolver: per-reply output cap (nil/0 = send no cap)
 }
 
 // SetNoaEnabled wires a resolver deciding whether runs use the experimental noa
@@ -81,6 +83,14 @@ func (m *MainAgent) SetWebSearch(o WebSearchOpts) { m.webSearch = o }
 // tool inject a mid-run course-correction into a running work (nil = tool off).
 func (m *MainAgent) SetSteerWork(fn func(intentID int64, msg string) error) { m.steerWork = fn }
 
+// SetMatrixGuard applies the same matrix-task dispatch guard used by planner.
+func (m *MainAgent) SetMatrixGuard(fn func(IntentSpec) (bool, string)) { m.matrixGuard = fn }
+
+// SetMatrixIntentResolver lets structured main-agent intents resolve to matrix cases.
+func (m *MainAgent) SetMatrixIntentResolver(fn func(IntentSpec) (*ResolvedIntent, error)) {
+	m.matrixResolver = fn
+}
+
 // mainAgentDefaultTmpl is the built-in EDITABLE body (段 [A]) of the main agent
 // prompt, seeded into agent_prompts. Goal is a {{.Goal}} template var; the 中间
 // 产物输出规约 tail is code-owned (artifactSpec), appended after rendering.
@@ -123,6 +133,9 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	tsx.SetNotifyGoal(notifyGoal) // set_goals 新增目标 → 给 planner 记一条「人新增了目标：…」触发
 	tsx.SetNotifyHint(notifyHint) // add_hint 新增提示 → 给 planner 记一条「人新增了 N 条战略提示：…」触发
 	tsx.steerWork = m.steerWork   // enable steer_work tool (nil = unavailable)
+	tsx.SetMatrixGuard(m.matrixGuard)
+	tsx.SetMatrixIntentResolver(m.matrixResolver)
+	tsx.SetIntentOrigin("mainagent")
 	// 领域工具 + 代码审计通用工具集（Read/Write/Edit/MultiEdit/LS/Glob/Grep；无 Bash/出网工具）
 	// 资产覆盖度功能关闭时剔除 add_task_scope/list_untested_assets（不入 prompt）。
 	base := append(tsx.DropCoverageTools(tsx.MainAgentTools()), CodeAuditTools()...)

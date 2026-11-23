@@ -610,6 +610,8 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	main.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
 	main.SetWebSearch(s.webSearchFor("mainagent"))
 	main.SetSteerWork(s.engine.SteerWork) // steer_work：人对运行中 work 实时纠偏
+	main.SetMatrixGuard(func(spec agent.IntentSpec) (bool, string) { return s.matrixGuardForTask(t, spec) })
+	main.SetMatrixIntentResolver(func(spec agent.IntentSpec) (*agent.ResolvedIntent, error) { return s.resolveMatrixIntent(t, spec) })
 	bundle := &taskAgentBundle{
 		runtime: goalRuntime, plannerRuntime: plannerRuntime, workerRuntime: workerRuntime,
 		mainRuntime: mainRuntime, pl: pl, wk: wk, main: main,
