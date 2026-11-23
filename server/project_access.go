@@ -49,7 +49,7 @@ func parseAccessProfile(raw json.RawMessage) projectAccessProfile {
 	if p.ManagementInternalScope == "" {
 		p.ManagementInternalScope = "unknown"
 	}
-	if p.ClientScope == "" {
+	if p.ClientScope == "" || p.ClientScope == "public" {
 		p.ClientScope = "unknown"
 	}
 	if p.SharedManagement == "" {
@@ -102,7 +102,7 @@ func normalizeAccessProfile(in projectAccessProfile) (projectAccessProfile, erro
 	if !validChoice(in.ManagementInternalScope, "all", "department", "self", "unknown") {
 		return in, fmt.Errorf("management_internal_scope 不合法")
 	}
-	if !validChoice(in.ClientScope, "self", "public", "unknown") {
+	if !validChoice(in.ClientScope, "related", "self", "unknown") {
 		return in, fmt.Errorf("client_scope 不合法")
 	}
 	if !validChoice(in.SharedManagement, "yes", "no", "unknown") {
@@ -147,6 +147,8 @@ func accessProfileBlock(raw json.RawMessage) string {
 			return "只能访问分配给当前主体的数据"
 		case "self":
 			return "只能访问本人数据"
+		case "related":
+			return "可以访问本人及明确关联的数据"
 		case "public":
 			return "公开/共享数据"
 		default:
@@ -168,6 +170,7 @@ func accessProfileBlock(raw json.RawMessage) string {
 	b.WriteString("- 管理端业务数据 scope=department/assigned/self：必须找到对应的部门、归属或分配条件；没有则按越权处理。\n")
 	b.WriteString("- 管理端内部资料 scope=all：允许管理端角色查看全部医生/员工资料；scope=self 时必须绑定当前主体；scope=department 时必须绑定部门/科室条件。\n")
 	b.WriteString("- 客户端 scope=self：必须有 principal 与资源的归属绑定；没有则按越权处理。\n")
+	b.WriteString("- 客户端 scope=related：必须存在本人或明确关联关系（家庭、团队、共享授权等）；没有则按越权处理。\n")
 	b.WriteString("- scope=unknown 或接口端别无法判断：写 needs_more，不要猜业务允许。\n")
 	b.WriteString("- 若项目声明存在客户端可访问的管理端接口，按共享接口单独判断；不能把整个管理端范围改成公开。\n")
 	return b.String()

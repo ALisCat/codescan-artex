@@ -113,6 +113,8 @@ function accessScopeLabel(v: string) {
       return "按分配/归属";
     case "self":
       return "仅本人";
+    case "related":
+      return "本人及关联";
     case "public":
       return "公开/共享";
     default:
@@ -1497,10 +1499,10 @@ function DetailInner() {
                 value={accessForm.management_scope}
                 onChange={(e) => setAccessForm({ ...accessForm, management_scope: e.target.value as ProjectAccessProfile["management_scope"] })}
               >
-                <option value="all">可以查看全部数据</option>
-                <option value="department">只能查看所属部门/科室</option>
-                <option value="assigned">只能查看分配给自己的数据</option>
-                <option value="self">只能查看本人数据</option>
+                <option value="all">全部业务数据（包含部门、分配和本人数据）</option>
+                <option value="department">本组织/部门业务数据（包含本人数据）</option>
+                <option value="assigned">分配给自己的业务数据（包含本人数据）</option>
+                <option value="self">仅本人业务数据</option>
                 <option value="unknown">不确定</option>
               </select>
             </div>
@@ -1516,21 +1518,21 @@ function DetailInner() {
                   })
                 }
               >
-                <option value="all">可以查看全部医生/员工资料</option>
-                <option value="department">只能查看所属部门/科室人员资料</option>
-                <option value="self">只能查看自己的资料</option>
+                <option value="all">全部成员资料（包含本部门和本人资料）</option>
+                <option value="department">本组织/部门成员资料（包含本人资料）</option>
+                <option value="self">仅本人资料</option>
                 <option value="unknown">不确定</option>
               </select>
             </div>
             <div className="space-y-1.5">
-              <Label>客户端用户可以查看的数据范围</Label>
+              <Label>客户端私有数据范围</Label>
               <select
                 className="h-8 w-full rounded border bg-background px-2 text-sm"
                 value={accessForm.client_scope}
                 onChange={(e) => setAccessForm({ ...accessForm, client_scope: e.target.value as ProjectAccessProfile["client_scope"] })}
               >
-                <option value="self">只能查看自己的数据</option>
-                <option value="public">可以查看公开/共享数据</option>
+                <option value="related">本人及关联数据（包含本人数据）</option>
+                <option value="self">仅本人数据</option>
                 <option value="unknown">不确定</option>
               </select>
             </div>
