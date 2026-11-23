@@ -1072,6 +1072,7 @@ export interface ProjectAccessProfile {
   mode: "simple" | "advanced";
   multi_end: "yes" | "no" | "unknown";
   management_scope: "all" | "department" | "assigned" | "self" | "unknown";
+  management_internal_scope: "all" | "department" | "self" | "unknown";
   client_scope: "self" | "public" | "unknown";
   shared_management: "yes" | "no" | "unknown";
   advanced?: Record<string, unknown>;

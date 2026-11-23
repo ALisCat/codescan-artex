@@ -63,6 +63,7 @@ const DEFAULT_ACCESS_PROFILE: ProjectAccessProfile = {
   mode: "simple",
   multi_end: "unknown",
   management_scope: "unknown",
+  management_internal_scope: "unknown",
   client_scope: "unknown",
   shared_management: "unknown",
   notes: "",
@@ -1490,7 +1491,7 @@ function DetailInner() {
               </select>
             </div>
             <div className="space-y-1.5">
-              <Label>管理端用户可以查看的数据范围</Label>
+              <Label>管理端用户可以查看的业务数据范围（患者/客户/订单等）</Label>
               <select
                 className="h-8 w-full rounded border bg-background px-2 text-sm"
                 value={accessForm.management_scope}
@@ -1500,6 +1501,24 @@ function DetailInner() {
                 <option value="department">只能查看所属部门/科室</option>
                 <option value="assigned">只能查看分配给自己的数据</option>
                 <option value="self">只能查看本人数据</option>
+                <option value="unknown">不确定</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>管理端用户可以查看的内部资料范围</Label>
+              <select
+                className="h-8 w-full rounded border bg-background px-2 text-sm"
+                value={accessForm.management_internal_scope}
+                onChange={(e) =>
+                  setAccessForm({
+                    ...accessForm,
+                    management_internal_scope: e.target.value as ProjectAccessProfile["management_internal_scope"],
+                  })
+                }
+              >
+                <option value="all">可以查看全部医生/员工资料</option>
+                <option value="department">只能查看所属部门/科室人员资料</option>
+                <option value="self">只能查看自己的资料</option>
                 <option value="unknown">不确定</option>
               </select>
             </div>
