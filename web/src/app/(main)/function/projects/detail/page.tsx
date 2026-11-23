@@ -1494,6 +1494,9 @@ function DetailInner() {
             </div>
             <div className="space-y-1.5">
               <Label>管理端用户可以查看的业务数据范围（患者/客户/订单等）</Label>
+              <div className="text-muted-foreground text-[11px]">
+                这里的管理端范围默认描述普通管理端用户；admin/超级管理员默认可访问全部数据。
+              </div>
               <select
                 className="h-8 w-full rounded border bg-background px-2 text-sm"
                 value={accessForm.management_scope}

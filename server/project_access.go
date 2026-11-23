@@ -162,6 +162,7 @@ func accessProfileBlock(raw json.RawMessage) string {
 	b.WriteString("- 管理端内部资料范围（医生/员工/管理员等）：" + scopeLabel(p.ManagementInternalScope) + "\n")
 	b.WriteString("- 客户端数据范围：" + scopeLabel(p.ClientScope) + "\n")
 	b.WriteString("- 客户端可访问的管理端接口：" + label(p.SharedManagement, "有", "没有") + "\n")
+	b.WriteString("- 注意：管理端范围描述的是普通管理端用户；admin/超级管理员角色默认可访问全部数据，除非代码明确限制。\n")
 	if p.Notes != "" {
 		b.WriteString("- 业务补充：" + p.Notes + "\n")
 	}
