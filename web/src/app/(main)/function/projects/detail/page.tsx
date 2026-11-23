@@ -1195,7 +1195,10 @@ function DetailInner() {
 
                   {activeEndpoints.length > 0 && (
                     <div className="space-y-2">
-                      <div className="text-sm font-medium">直接受影响接口</div>
+                      <div className="text-sm font-medium">变更文件中的接口（候选）</div>
+                      <div className="text-muted-foreground text-[11px]">
+                        这是从变更文件解析出的 Controller 注解，不代表这些接口的方法都被改动。实际重审范围以增量准备后的 delta 矩阵为准。
+                      </div>
                       <div className="flex flex-wrap gap-2">
                         {activeEndpoints.map((ep, i) => (
                           <Badge key={`${ep.method}:${ep.path}:${i}`} variant="outline" className="font-mono">
