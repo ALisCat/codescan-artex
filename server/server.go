@@ -1164,7 +1164,6 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		}
 		dto := taskDTO(t, s.resolvedTaskStatus(t))
 		dto.CanWrite = access.Write
-		applyTaskArchiveBlocker(&dto, archiveBlockers)
 		metric := metrics[t.ExpID]
 		dto.Tokens = tokenTotalDTO(metric.Tokens)
 		// prefer the live in-memory heartbeat (fresher) and fall back to the
@@ -1184,7 +1183,217 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		}
 		dtos = append(dtos, dto)
 	}
-	writeJSON(w, 200, map[string]any{"tasks": dtos, "active": active})
+
+	// 没有翻页/筛选参数时保留原来的全量返回：Dashboard、分类管理、关联任务
+	// 选择器依赖完整列表；只有任务列表页显式带 page/size 才走分页。
+	q := r.URL.Query()
+	all := q.Get("all") == "1"
+	paged := !all && (q.Get("page") != "" || q.Get("size") != "" || q.Get("q") != "" ||
+		q.Get("status") != "" || q.Get("category") != "" || q.Get("sort") != "" || q.Get("direction") != "")
+	allTotal := len(dtos)
+	total := allTotal
+	page, size := 1, 0
+	canWriteAny := false
+	for _, dto := range dtos {
+		if dto.CanWrite {
+			canWriteAny = true
+			break
+		}
+	}
+	if paged {
+		page, _ = strconv.Atoi(q.Get("page"))
+		if page <= 0 {
+			page = 1
+		}
+		size, _ = strconv.Atoi(q.Get("size"))
+		if size <= 0 {
+			size = 10
+		}
+		if size > 100 {
+			size = 100
+		}
+		dtos = filterTaskDTOs(dtos, q.Get("q"), q.Get("status"), q.Get("category"))
+		total = len(dtos)
+		canWriteAny = false
+		for _, dto := range dtos {
+			if dto.CanWrite {
+				canWriteAny = true
+				break
+			}
+		}
+		sortTaskDTOs(dtos, q.Get("sort"), q.Get("direction"), time.Now().Unix())
+		start := (page - 1) * size
+		if start > len(dtos) {
+			start = len(dtos)
+		}
+		end := start + size
+		if end > len(dtos) {
+			end = len(dtos)
+		}
+		dtos = dtos[start:end]
+	} else {
+		size = len(dtos)
+	}
+	for i := range dtos {
+		applyTaskArchiveBlocker(&dtos[i], archiveBlockers)
+	}
+	writeJSON(w, 200, map[string]any{
+		"tasks":         dtos,
+		"active":        active,
+		"total":         total,
+		"all_total":     allTotal,
+		"page":          page,
+		"size":          size,
+		"can_write_any": canWriteAny,
+	})
+}
+
+func taskStatusRank(status string) int {
+	switch status {
+	case "created":
+		return 0
+	case "queued":
+		return 1
+	case "running":
+		return 2
+	case "paused":
+		return 3
+	case "done":
+		return 4
+	case "failed":
+		return 5
+	case "timeout":
+		return 6
+	default:
+		return 99
+	}
+}
+
+func compareTaskIDs(a, b string) int {
+	ai, aerr := strconv.ParseInt(a, 10, 64)
+	bi, berr := strconv.ParseInt(b, 10, 64)
+	if aerr == nil && berr == nil {
+		switch {
+		case ai < bi:
+			return -1
+		case ai > bi:
+			return 1
+		default:
+			return 0
+		}
+	}
+	return strings.Compare(a, b)
+}
+
+func taskDurationSeconds(dto TaskDTO, now int64) int64 {
+	start := dto.CreatedUnix
+	if start <= 0 {
+		return 0
+	}
+	end := dto.CompletedUnix
+	if dto.Status == "running" {
+		end = now
+	} else if end <= 0 {
+		end = dto.LastActivity
+	}
+	if end > start {
+		return end - start
+	}
+	return 0
+}
+
+func compareTaskDTO(a, b TaskDTO, field, direction string, now int64) int {
+	if a.Pinned != b.Pinned {
+		if a.Pinned {
+			return -1
+		}
+		return 1
+	}
+	if a.Pinned && a.PinnedAt != b.PinnedAt {
+		return strings.Compare(b.PinnedAt, a.PinnedAt)
+	}
+	var compared int
+	switch field {
+	case "created":
+		switch {
+		case a.CreatedUnix < b.CreatedUnix:
+			compared = -1
+		case a.CreatedUnix > b.CreatedUnix:
+			compared = 1
+		}
+	case "duration":
+		ad, bd := taskDurationSeconds(a, now), taskDurationSeconds(b, now)
+		switch {
+		case ad < bd:
+			compared = -1
+		case ad > bd:
+			compared = 1
+		}
+	case "status":
+		switch {
+		case taskStatusRank(a.Status) < taskStatusRank(b.Status):
+			compared = -1
+		case taskStatusRank(a.Status) > taskStatusRank(b.Status):
+			compared = 1
+		}
+	default:
+		compared = compareTaskIDs(a.ID, b.ID)
+	}
+	if compared != 0 {
+		if direction == "asc" {
+			return compared
+		}
+		return -compared
+	}
+	return -compareTaskIDs(a.ID, b.ID)
+}
+
+func sortTaskDTOs(dtos []TaskDTO, field, direction string, now int64) {
+	switch field {
+	case "id", "created", "duration", "status":
+	default:
+		field = "id"
+	}
+	if direction != "asc" {
+		direction = "desc"
+	}
+	sort.SliceStable(dtos, func(i, j int) bool {
+		return compareTaskDTO(dtos[i], dtos[j], field, direction, now) < 0
+	})
+}
+
+func filterTaskDTOs(dtos []TaskDTO, query, status, category string) []TaskDTO {
+	needle := strings.ToLower(strings.TrimSpace(query))
+	status = strings.TrimSpace(status)
+	category = strings.TrimSpace(category)
+	out := make([]TaskDTO, 0, len(dtos))
+	for _, dto := range dtos {
+		if status != "" && dto.Status != status {
+			continue
+		}
+		if category != "" && category != "all" {
+			if category == "uncategorized" {
+				if dto.CategoryID != nil {
+					continue
+				}
+			} else if categoryID, err := strconv.ParseInt(category, 10, 64); err == nil {
+				if dto.CategoryID == nil || *dto.CategoryID != categoryID {
+					continue
+				}
+			}
+		}
+		if needle != "" {
+			if !strings.Contains(strings.ToLower(dto.Name), needle) &&
+				!strings.Contains(strings.ToLower(dto.CategoryName), needle) &&
+				!strings.Contains(strings.ToLower(dto.Description), needle) &&
+				!strings.Contains(strings.ToLower(dto.Goal), needle) &&
+				!strings.Contains(strings.ToLower(dto.ID), needle) {
+				continue
+			}
+		}
+		out = append(out, dto)
+	}
+	return out
 }
 
 func (s *Server) resolvedTaskStatus(t *Task) string {

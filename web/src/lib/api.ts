@@ -321,6 +321,41 @@ export const api = {
   // ---- tasks ----
   tasks: () =>
     get<{ tasks: Task[]; active: string }>("/tasks").then((r) => ({ tasks: arr(r.tasks), active: r.active ?? "" })),
+  tasksPage: (params: {
+    page?: number;
+    size?: number;
+    q?: string;
+    status?: string;
+    category?: string;
+    sort?: string;
+    direction?: string;
+  } = {}) => {
+    const search = new URLSearchParams();
+    if (params.page) search.set("page", String(params.page));
+    if (params.size) search.set("size", String(params.size));
+    if (params.q?.trim()) search.set("q", params.q.trim());
+    if (params.status) search.set("status", params.status);
+    if (params.category) search.set("category", params.category);
+    if (params.sort) search.set("sort", params.sort);
+    if (params.direction) search.set("direction", params.direction);
+    return get<{
+      tasks: Task[] | null;
+      active?: string;
+      total?: number;
+      all_total?: number;
+      page?: number;
+      size?: number;
+      can_write_any?: boolean;
+    }>(`/tasks${search.toString() ? `?${search.toString()}` : ""}`).then((r) => ({
+      tasks: arr(r.tasks),
+      active: r.active ?? "",
+      total: r.total ?? arr(r.tasks).length,
+      allTotal: r.all_total ?? r.total ?? arr(r.tasks).length,
+      page: r.page ?? params.page ?? 1,
+      size: r.size ?? params.size ?? 10,
+      canWriteAny: r.can_write_any ?? true,
+    }));
+  },
   task: (id: string) => get<Task>(`/tasks/${encodeURIComponent(id)}`),
   // uploadTaskSource 上传源码压缩包：后端自动解压到 staging 目录，返回 upload_id。
   // 创建任务时带上 upload_id，后端把源码搬进该任务目录（data/tasks/<id>/source）。

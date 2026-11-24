@@ -297,46 +297,8 @@ const TASK_SORT_FIELDS: readonly TaskSortField[] = ["id", "created", "duration",
 const TASK_SORT_PREFERENCE_KEY = "artex_task_list_sort";
 const TASK_FILTER_PREFERENCE_KEY = "artex_task_list_filters";
 
-const TASK_STATUS_RANK = new Map(STATUS_OPTIONS.map((option, index) => [option.value, index]));
-
 function taskIsPinned(task: Task): boolean {
   return task.pinned ?? Boolean(task.pinned_at);
-}
-
-function compareTaskIDs(left: string, right: string): number {
-  return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
-}
-
-function taskCreatedUnix(task: Task): number {
-  if (task.created_unix) return task.created_unix;
-  const parsed = Date.parse(task.created_at);
-  return Number.isNaN(parsed) ? 0 : Math.floor(parsed / 1000);
-}
-
-function compareTasks(left: Task, right: Task, field: TaskSortField, direction: SortDirection, nowSec: number): number {
-  const leftPinned = taskIsPinned(left);
-  const rightPinned = taskIsPinned(right);
-  if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
-  if (leftPinned && left.pinned_at !== right.pinned_at) {
-    return (right.pinned_at ?? "").localeCompare(left.pinned_at ?? "");
-  }
-
-  let compared = 0;
-  switch (field) {
-    case "created":
-      compared = taskCreatedUnix(left) - taskCreatedUnix(right);
-      break;
-    case "duration":
-      compared = taskDuration(left, nowSec) - taskDuration(right, nowSec);
-      break;
-    case "status":
-      compared = (TASK_STATUS_RANK.get(left.status) ?? 0) - (TASK_STATUS_RANK.get(right.status) ?? 0);
-      break;
-    default:
-      compared = compareTaskIDs(left.id, right.id);
-  }
-  if (compared !== 0) return direction === "asc" ? compared : -compared;
-  return -compareTaskIDs(left.id, right.id);
 }
 
 export default function TasksPage() {
@@ -344,6 +306,9 @@ export default function TasksPage() {
   const { permissions } = useAuth();
   const [activeTab, setActiveTab] = React.useState("current");
   const [tasks, setTasks] = React.useState<Task[]>([]);
+  const [total, setTotal] = React.useState(0);
+  const [allTotal, setAllTotal] = React.useState(0);
+  const [canWriteAnyTask, setCanWriteAnyTask] = React.useState(true);
   const [categories, setCategories] = React.useState<TaskCategory[]>([]);
   const [categoriesLoaded, setCategoriesLoaded] = React.useState(false);
   const [query, setQuery] = React.useState("");
@@ -362,6 +327,10 @@ export default function TasksPage() {
   const [nowSec, setNowSec] = React.useState(() => Math.floor(Date.now() / 1000));
   const [batchControlling, setBatchControlling] = React.useState<"pause" | "resume" | null>(null);
   const [movingCategory, setMovingCategory] = React.useState(false);
+  // 分页后当前页只拿一页任务；跨页勾选必须保存任务快照，不能再用
+  // “当前 tasks 里是否还有这个 id”来清理，否则翻页会把上一页的选择全部丢掉。
+  const [selectedTaskMap, setSelectedTaskMap] = React.useState<Map<string, Task>>(() => new Map());
+  const selectedIds = React.useMemo(() => new Set(selectedTaskMap.keys()), [selectedTaskMap]);
 
   React.useEffect(() => {
     const raw = getLocalStorageValue(TASK_FILTER_PREFERENCE_KEY);
@@ -392,33 +361,6 @@ export default function TasksPage() {
     );
   }, [categoryFilter, filtersHydrated, statusFilter]);
 
-  const filtered = React.useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return tasks.filter((t) => {
-      if (statusFilter !== "all" && t.status !== statusFilter) return false;
-      if (categoryFilter === UNCATEGORIZED_VALUE && t.category_id != null) return false;
-      if (
-        categoryFilter !== "all" &&
-        categoryFilter !== UNCATEGORIZED_VALUE &&
-        String(t.category_id) !== categoryFilter
-      )
-        return false;
-      if (!q) return true;
-      return (
-        (t.name ?? "").toLowerCase().includes(q) ||
-        (t.category_name ?? "").toLowerCase().includes(q) ||
-        t.description.toLowerCase().includes(q) ||
-        t.goal.toLowerCase().includes(q) ||
-        t.id.toLowerCase().includes(q)
-      );
-    });
-  }, [tasks, query, statusFilter, categoryFilter]);
-
-  const sortNowSec = sortField === "duration" ? nowSec : 0;
-  const ordered = React.useMemo(() => {
-    return [...filtered].sort((left, right) => compareTasks(left, right, sortField, sortDirection, sortNowSec));
-  }, [filtered, sortDirection, sortField, sortNowSec]);
-
   const sortTasksBy = React.useCallback(
     (field: TaskSortField) => {
       setSortPreference((current) => {
@@ -435,31 +377,39 @@ export default function TasksPage() {
     setPage(1);
   }, [query, statusFilter, categoryFilter, sortField, sortDirection]);
 
-  const paginated = React.useMemo(
-    () => ordered.slice((page - 1) * pageSize, page * pageSize),
-    [ordered, page, pageSize],
-  );
-
-  // 多选删除:选择跨翻页/筛选保留,只在任务真的消失(被删或后端不再返回)时收敛。
-  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+  // 当前页就是后端返回的任务；筛选、排序、分页都由 /api/tasks 完成。
+  const paginated = tasks;
 
   React.useEffect(() => {
-    setSelectedIds((prev) => {
+    setSelectedTaskMap((prev) => {
       if (prev.size === 0) return prev;
-      const live = new Set(tasks.map((t) => t.id));
-      const next = new Set([...prev].filter((id) => live.has(id)));
-      return next.size === prev.size ? prev : next;
+      let changed = false;
+      const next = new Map(prev);
+      for (const task of tasks) {
+        if (!next.has(task.id)) continue;
+        next.set(task.id, task);
+        changed = true;
+      }
+      return changed ? next : prev;
     });
   }, [tasks]);
 
-  const toggleSelected = React.useCallback((id: string, checked: boolean) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  }, []);
+  const toggleSelected = React.useCallback(
+    (id: string, checked: boolean) => {
+      setSelectedTaskMap((prev) => {
+        const next = new Map(prev);
+        if (checked) {
+          const task = tasks.find((item) => item.id === id) ?? prev.get(id);
+          if (!task) return prev;
+          next.set(id, task);
+        } else {
+          next.delete(id);
+        }
+        return next;
+      });
+    },
+    [tasks],
+  );
 
   const pageIds = React.useMemo(() => paginated.map((t) => t.id), [paginated]);
   const pageSelectedCount = React.useMemo(
@@ -475,37 +425,62 @@ export default function TasksPage() {
 
   const toggleSelectedPage = React.useCallback(
     (checked: boolean) => {
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-        for (const id of pageIds) {
-          if (checked) next.add(id);
-          else next.delete(id);
+      setSelectedTaskMap((prev) => {
+        const next = new Map(prev);
+        for (const task of tasks) {
+          if (checked) next.set(task.id, task);
+          else next.delete(task.id);
         }
         return next;
       });
     },
-    [pageIds],
+    [tasks],
   );
 
   // lastRef holds the previous poll's serialized payload: the list is re-fetched every
   // POLL_MS but usually comes back unchanged, and setTasks on an identical payload would
   // re-render the whole page for nothing. Bail out when it matches.
   const lastRef = React.useRef<string>("");
+  const loadSeq = React.useRef(0);
 
   const load = React.useCallback(() => {
+    if (!filtersHydrated) return;
+    const seq = ++loadSeq.current;
     api
-      .tasks()
+      .tasksPage({
+        page,
+        size: pageSize,
+        q: query,
+        status: statusFilter === "all" ? undefined : statusFilter,
+        category: categoryFilter === "all" ? undefined : categoryFilter,
+        sort: sortField,
+        direction: sortDirection,
+      })
       .then((r) => {
+        if (seq !== loadSeq.current) return;
         const next = r.tasks.map((t) => (t.id === r.active ? { ...t, active: true } : t));
-        const sig = JSON.stringify(next);
+        const sig = JSON.stringify({
+          tasks: next,
+          total: r.total,
+          allTotal: r.allTotal,
+          canWriteAny: r.canWriteAny,
+        });
         if (sig === lastRef.current) return;
         lastRef.current = sig;
         setTasks(next);
+        setTotal(r.total);
+        setAllTotal(r.allTotal);
+        setCanWriteAnyTask(r.canWriteAny);
       })
       .catch(() => {
         // Polling is best-effort; the next interval retries automatically.
       });
-  }, []);
+  }, [categoryFilter, filtersHydrated, page, pageSize, query, sortDirection, sortField, statusFilter]);
+
+  React.useEffect(() => {
+    const pages = Math.max(1, Math.ceil(total / pageSize));
+    if (page > pages) setPage(pages);
+  }, [page, pageSize, total]);
 
   const loadCategories = React.useCallback(() => {
     api
@@ -538,7 +513,14 @@ export default function TasksPage() {
         const next = current.map((task) =>
           task.id === taskID ? { ...task, category_id: category?.id, category_name: category?.name } : task,
         );
-        lastRef.current = JSON.stringify(next);
+        lastRef.current = "";
+        return next;
+      });
+      setSelectedTaskMap((prev) => {
+        if (!prev.has(taskID)) return prev;
+        const next = new Map(prev);
+        const task = next.get(taskID);
+        if (task) next.set(taskID, { ...task, category_id: category?.id, category_name: category?.name });
         return next;
       });
       loadCategories();
@@ -702,8 +684,8 @@ export default function TasksPage() {
       }
 
       if (deleted.length > 0) {
-        setSelectedIds((prev) => {
-          const next = new Set(prev);
+        setSelectedTaskMap((prev) => {
+          const next = new Map(prev);
           for (const id of deleted) next.delete(id);
           return next;
         });
@@ -727,15 +709,15 @@ export default function TasksPage() {
     [load],
   );
 
-  const selectedTasks = React.useMemo(() => tasks.filter((task) => selectedIds.has(task.id)), [tasks, selectedIds]);
-  // 当前列表里是否存在「可写」任务：全是只读（纯部门访客）时连勾选列都不显示。
-  const canWriteAnyTask = React.useMemo(() => tasks.some((task) => !taskReadOnly(task)), [tasks]);
+  const selectedTasks = React.useMemo(() => [...selectedTaskMap.values()], [selectedTaskMap]);
+  // 后端根据筛选后的完整结果返回 can_write_any，避免「当前页恰好全是只读任务」
+  // 时把勾选列错误地隐藏掉。
   // 只读任务（部门访客）不能暂停/继续/归档：后端会 403，这里先把它们从批量目标里剔除。
   // 批量删除/改分类按 id 走，见 writableSelectedIDs。
-  const writableSelectedIDs = React.useMemo(() => {
-    const writable = new Set(tasks.filter((task) => !taskReadOnly(task)).map((task) => task.id));
-    return [...selectedIds].filter((id) => writable.has(id));
-  }, [selectedIds, tasks]);
+  const writableSelectedIDs = React.useMemo(
+    () => selectedTasks.filter((task) => !taskReadOnly(task)).map((task) => task.id),
+    [selectedTasks],
+  );
   const pausableTaskIDs = React.useMemo(
     () =>
       selectedTasks
@@ -772,7 +754,7 @@ export default function TasksPage() {
           .join("；")}`,
       );
     }
-    setSelectedIds(new Set());
+    setSelectedTaskMap(new Map());
     setActiveTab("archived");
     lastRef.current = "";
     load();
@@ -833,7 +815,7 @@ export default function TasksPage() {
         const target = result.category?.name ?? "未分类";
         if (succeeded.length > 0) {
           toast.success(`已将 ${succeeded.length} 个任务移动到「${target}」`);
-          setSelectedIds(new Set());
+          setSelectedTaskMap(new Map());
         }
         if (failed.length > 0) {
           const details = failed
@@ -913,7 +895,7 @@ export default function TasksPage() {
                 </SelectContent>
               </Select>
               <span className="text-muted-foreground text-xs tabular-nums">
-                {filtered.length}/{tasks.length} 条
+                {total}/{allTotal} 条
               </span>
               {selectedIds.size > 0 && (
                 <>
@@ -925,7 +907,7 @@ export default function TasksPage() {
                       {selectedIds.size - writableSelectedIDs.length} 个只读任务（部门访客）不参与批量操作
                     </span>
                   )}
-                  <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>
+                  <Button size="sm" variant="ghost" onClick={() => setSelectedTaskMap(new Map())}>
                     取消选择
                   </Button>
                   {pausableTaskIDs.length > 0 && (
@@ -1008,14 +990,14 @@ export default function TasksPage() {
               )}
             </div>
 
-            {tasks.length === 0 ? (
+            {allTotal === 0 ? (
               <div className="text-muted-foreground mx-4 flex items-center justify-center rounded-lg border border-dashed py-20 text-center text-sm lg:mx-6">
                 {/* 访客没有「新建任务」入口，空态就别再指向一个不存在的按钮。 */}
                 {permissions.can_create_task
                   ? "暂无任务，点击右上角「新建任务」开始。"
                   : "暂无任务。当前账号是部门访客（只读），可以查看本部门任务，但不能创建任务。"}
               </div>
-            ) : filtered.length === 0 ? (
+            ) : total === 0 ? (
               <div className="text-muted-foreground mx-4 flex items-center justify-center rounded-lg border border-dashed py-20 text-sm lg:mx-6">
                 没有匹配的任务。
               </div>
@@ -1102,7 +1084,7 @@ export default function TasksPage() {
             <TablePagination
               page={page}
               pageSize={pageSize}
-              total={filtered.length}
+              total={total}
               onPageChange={setPage}
               onPageSizeChange={(nextPageSize) => {
                 setPageSize(nextPageSize);
@@ -2959,11 +2941,29 @@ function CategoryManagementSheet({
   const [deleting, setDeleting] = React.useState(false);
   const [movingTaskID, setMovingTaskID] = React.useState<string | null>(null);
   const [activeTaskID, setActiveTaskID] = React.useState<string | null>(null);
+  const [allTasks, setAllTasks] = React.useState<Task[] | null>(null);
   const wasOpen = React.useRef(false);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor),
   );
+
+  const reloadAllTasks = React.useCallback(() => {
+    api
+      .tasks()
+      .then((result) => setAllTasks(result.tasks))
+      .catch(() => {
+        // Keep the previous snapshot; the main list is still usable.
+      });
+  }, []);
+
+  React.useEffect(() => {
+    if (open) reloadAllTasks();
+  }, [open, reloadAllTasks]);
+
+  // 分类管理需要完整任务集做拖拽和未分类计数；主列表现在只加载当前页，
+  // 所以抽屉打开时单独补一次全量数据，不阻塞首屏。
+  const taskSource = allTasks ?? tasks;
 
   React.useEffect(() => {
     if (open && !wasOpen.current) {
@@ -2971,7 +2971,7 @@ function CategoryManagementSheet({
       if (first) {
         setSelectedView(first.id);
         setDraftName(first.name);
-      } else if (tasks.some((task) => task.category_id == null)) {
+      } else if (taskSource.some((task) => task.category_id == null)) {
         setSelectedView("uncategorized");
         setDraftName("");
       } else {
@@ -2980,7 +2980,7 @@ function CategoryManagementSheet({
       }
     }
     wasOpen.current = open;
-  }, [categories, open, tasks]);
+  }, [categories, open, taskSource]);
 
   const selectedCategory = React.useMemo(
     () =>
@@ -2988,15 +2988,21 @@ function CategoryManagementSheet({
     [categories, selectedView],
   );
 
-  const uncategorizedCount = React.useMemo(() => tasks.filter((task) => task.category_id == null).length, [tasks]);
+  const uncategorizedCount = React.useMemo(
+    () => taskSource.filter((task) => task.category_id == null).length,
+    [taskSource],
+  );
 
   const visibleTasks = React.useMemo(() => {
-    if (selectedView === "uncategorized") return tasks.filter((task) => task.category_id == null);
-    if (typeof selectedView === "number") return tasks.filter((task) => task.category_id === selectedView);
+    if (selectedView === "uncategorized") return taskSource.filter((task) => task.category_id == null);
+    if (typeof selectedView === "number") return taskSource.filter((task) => task.category_id === selectedView);
     return [];
-  }, [selectedView, tasks]);
+  }, [selectedView, taskSource]);
 
-  const activeTask = React.useMemo(() => tasks.find((task) => task.id === activeTaskID) ?? null, [activeTaskID, tasks]);
+  const activeTask = React.useMemo(
+    () => taskSource.find((task) => task.id === activeTaskID) ?? null,
+    [activeTaskID, taskSource],
+  );
 
   const selectCategory = (category: TaskCategory) => {
     setSelectedView(category.id);
@@ -3029,6 +3035,7 @@ function CategoryManagementSheet({
         toast.success("分类已更新");
       }
       onChanged();
+      reloadAllTasks();
     } catch (error) {
       toast.error(`${selectedView === "new" ? "创建" : "更新"}分类失败：${(error as Error).message}`);
     } finally {
@@ -3048,6 +3055,7 @@ function CategoryManagementSheet({
       toast.success("分类已删除，关联任务已移入未分类");
       setDeleteOpen(false);
       onChanged();
+      reloadAllTasks();
     } catch (error) {
       toast.error(`删除分类失败：${(error as Error).message}`);
     } finally {
@@ -3069,6 +3077,15 @@ function CategoryManagementSheet({
     try {
       await api.updateTaskCategory(task.id, category?.id);
       onTaskMoved(task.id, category);
+      setAllTasks((prev) =>
+        prev
+          ? prev.map((item) =>
+              item.id === task.id
+                ? { ...item, category_id: category?.id, category_name: category?.name }
+                : item,
+            )
+          : prev,
+      );
       toast.success(`任务 #${task.id} 已移至「${category?.name ?? "未分类"}」`);
     } catch (error) {
       toast.error(`移动任务失败：${(error as Error).message}`);
@@ -3089,7 +3106,7 @@ function CategoryManagementSheet({
     if (!taskID || !event.over) return;
     const destination = String(event.over.id);
     if (!destination.startsWith("category:")) return;
-    const task = tasks.find((item) => item.id === taskID);
+    const task = taskSource.find((item) => item.id === taskID);
     if (!task) return;
     void moveTask(task, destination.slice("category:".length));
   }
@@ -3525,6 +3542,7 @@ function CreateTaskSheet({
 }) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
+  const [sourceTaskOptions, setSourceTaskOptions] = React.useState<Task[]>(tasks);
   const [name, setName] = React.useState("");
   const [categoryID, setCategoryID] = React.useState<number | undefined>(undefined);
   const [description, setDescription] = React.useState("");
@@ -3598,6 +3616,17 @@ function CreateTaskSheet({
         /* 恢复失败不该打扰用户：他本来只是想建一个新任务 */
       });
   }, [user?.id, sourceUpload]);
+
+  // 主列表只加载当前页；「关联任务」需要完整列表，打开抽屉时补拉一次。
+  React.useEffect(() => {
+    if (!open) return;
+    api
+      .tasks()
+      .then((result) => setSourceTaskOptions(result.tasks))
+      .catch(() => {
+        // Keep the page snapshot as a fallback.
+      });
+  }, [open]);
 
   // load LLM profiles once for the create-task profile picker.
   React.useEffect(() => {
@@ -4006,7 +4035,7 @@ function CreateTaskSheet({
             <Field>
               <FieldLabel htmlFor="source-tasks">关联任务</FieldLabel>
               <SourceTaskPicker
-                tasks={tasks}
+                tasks={sourceTaskOptions}
                 value={sourceTaskIDs}
                 onValueChange={setSourceTaskIDs}
                 portalContainer={sheetContentRef}
