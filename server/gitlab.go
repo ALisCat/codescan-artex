@@ -214,12 +214,22 @@ func (s *Server) gitlabListBranches(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
-	projects, err := s.m.pg.CodeProjects().List()
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+	projects, total, err := s.m.pg.CodeProjects().ListPage(
+		r.URL.Query().Get("q"), r.URL.Query().Get("status"), r.URL.Query().Get("sort"), page, size,
+	)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"projects": projects})
+	if page <= 0 {
+		page = 1
+	}
+	if size <= 0 || size > 100 {
+		size = 20
+	}
+	writeJSON(w, 200, map[string]any{"projects": projects, "total": total, "page": page, "size": size})
 }
 
 func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {

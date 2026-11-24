@@ -1140,7 +1140,22 @@ export const api = {
     ),
   gitlabBranches: (id: number) =>
     get<{ branches: GitLabBranch[] | null }>(`/gitlab/projects/${id}/branches`).then((r) => arr(r.branches)),
-  projects: () => get<{ projects: CodeProject[] | null }>(`/projects`).then((r) => arr(r.projects)),
+  projects: (params: { page?: number; size?: number; q?: string; status?: string; sort?: string } = {}) => {
+    const search = new URLSearchParams();
+    if (params.page) search.set("page", String(params.page));
+    if (params.size) search.set("size", String(params.size));
+    if (params.q?.trim()) search.set("q", params.q.trim());
+    if (params.status && params.status !== "all") search.set("status", params.status);
+    if (params.sort) search.set("sort", params.sort);
+    return get<{ projects: CodeProject[] | null; total?: number; page?: number; size?: number }>(
+      `/projects${search.toString() ? `?${search.toString()}` : ""}`,
+    ).then((r) => ({
+      projects: arr(r.projects),
+      total: r.total ?? arr(r.projects).length,
+      page: r.page ?? params.page ?? 1,
+      size: r.size ?? params.size ?? 20,
+    }));
+  },
   project: (id: number) => get<CodeProject>(`/projects/${id}`),
   createProject: (payload: { path: string; name?: string; branch?: string; gitlab_project_id?: number }) =>
     post<CodeProject>(`/projects`, payload),

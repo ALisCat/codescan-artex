@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -97,6 +98,72 @@ func (s *CodeProjectStore) List() ([]CodeProject, error) {
 		out = append(out, *p)
 	}
 	return out, rows.Err()
+}
+
+// ListPage returns a filtered, sorted page of projects and the total matching count.
+// Status values are UI-facing keys: unaudited, audited, update, error.
+func (s *CodeProjectStore) ListPage(q, status, sortBy string, page, size int) ([]CodeProject, int, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if size <= 0 || size > 100 {
+		size = 20
+	}
+	where := []string{"TRUE"}
+	args := []any{}
+	addArg := func(v any) int {
+		args = append(args, v)
+		return len(args)
+	}
+	if q = strings.TrimSpace(q); q != "" {
+		n := addArg("%" + q + "%")
+		where = append(where, fmt.Sprintf("(name ILIKE $%d OR path ILIKE $%d)", n, n))
+	}
+	switch strings.TrimSpace(status) {
+	case "unaudited":
+		where = append(where, "last_audited_commit = ''")
+	case "audited":
+		where = append(where, "last_audited_commit <> '' AND last_seen_commit = last_audited_commit AND last_check_error = ''")
+	case "update":
+		where = append(where, "last_audited_commit <> '' AND last_seen_commit <> last_audited_commit AND last_check_error = ''")
+	case "error":
+		where = append(where, "last_check_error <> ''")
+	}
+	clause := strings.Join(where, " AND ")
+	order := "updated_at DESC, id DESC"
+	switch strings.TrimSpace(sortBy) {
+	case "name":
+		order = "name ASC, id ASC"
+	case "audited":
+		order = "last_audited_commit DESC, updated_at DESC, id DESC"
+	case "status":
+		order = "CASE WHEN last_check_error <> '' THEN 0 WHEN last_audited_commit = '' THEN 1 WHEN last_seen_commit <> last_audited_commit THEN 2 ELSE 3 END, updated_at DESC, id DESC"
+	}
+	var total int
+	if err := s.db.QueryRow(`SELECT count(*) FROM code_projects WHERE `+clause, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	offset := (page - 1) * size
+	args = append(args, size, offset)
+	limitN := len(args) - 1
+	rows, err := s.db.Query(`SELECT `+codeProjectCols+` FROM code_projects WHERE `+clause+
+		fmt.Sprintf(" ORDER BY %s LIMIT $%d OFFSET $%d", order, limitN, limitN+1), args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []CodeProject{}
+	for rows.Next() {
+		p, err := scanCodeProject(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, *p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return out, total, nil
 }
 
 func (s *CodeProjectStore) Get(id int64) (*CodeProject, error) {

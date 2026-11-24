@@ -99,48 +99,32 @@ export default function ProjectsPage() {
   const [statusFilter, setStatusFilter] = React.useState("all");
   const [sortBy, setSortBy] = React.useState("updated");
   const [page, setPage] = React.useState(1);
+  const [total, setTotal] = React.useState(0);
   const pageSize = 20;
 
-  const load = React.useCallback(() => {
-    setLoading(true);
-    Promise.all([api.projects(), api.settings()])
-      .then(([ps, s]) => {
-        setProjects(ps);
-        setSettings(s);
-      })
-      .catch((e) => toast.error("读取项目失败：" + (e as Error).message))
-      .finally(() => setLoading(false));
-  }, []);
+  const load = React.useCallback(
+    (nextPage = page, nextQ = q, nextStatus = statusFilter, nextSort = sortBy) => {
+      setLoading(true);
+      Promise.all([
+        api.projects({ page: nextPage, size: pageSize, q: nextQ, status: nextStatus, sort: nextSort }),
+        api.settings(),
+      ])
+        .then(([ps, s]) => {
+          setProjects(ps.projects);
+          setTotal(ps.total);
+          setSettings(s);
+        })
+        .catch((e) => toast.error("读取项目失败：" + (e as Error).message))
+        .finally(() => setLoading(false));
+    },
+    [page, q, statusFilter, sortBy],
+  );
 
   React.useEffect(() => {
     load();
   }, [load]);
 
-  const filtered = React.useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    let list = projects.filter(
-      (p) =>
-        (!needle ||
-          p.name.toLowerCase().includes(needle) ||
-          p.path.toLowerCase().includes(needle)) &&
-        (statusFilter === "all" || projectState(p).label === statusFilter),
-    );
-    list = [...list].sort((a, b) => {
-      switch (sortBy) {
-        case "name":
-          return a.name.localeCompare(b.name);
-        case "audited":
-          return (b.last_audited_commit || "").localeCompare(a.last_audited_commit || "");
-        case "status":
-          return projectState(a).label.localeCompare(projectState(b).label);
-        default:
-          return (b.updated_at || "").localeCompare(a.updated_at || "");
-      }
-    });
-    return list;
-  }, [projects, q, statusFilter, sortBy]);
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const paged = filtered.slice((page - 1) * pageSize, page * pageSize);
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
   React.useEffect(() => {
     setPage(1);
@@ -254,7 +238,8 @@ export default function ProjectsPage() {
       });
       toast.success(`已添加项目：${p.name}`);
       setAddOpen(false);
-      load();
+      setPage(1);
+      load(1, q, statusFilter, sortBy);
     } catch (e) {
       toast.error("添加项目失败：" + (e as Error).message);
     } finally {
@@ -281,8 +266,11 @@ export default function ProjectsPage() {
     try {
       await api.deleteProject(deleteTarget.id);
       setProjects((prev) => prev.filter((p) => p.id !== deleteTarget.id));
+      setTotal((prev) => Math.max(0, prev - 1));
       toast.success(`已删除项目：${deleteTarget.name}`);
       setDeleteTarget(null);
+      setPage(1);
+      load(1, q, statusFilter, sortBy);
     } catch (e) {
       toast.error("删除项目失败：" + (e as Error).message);
     } finally {
@@ -343,10 +331,10 @@ export default function ProjectsPage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">全部状态</SelectItem>
-            <SelectItem value="未审计">未审计</SelectItem>
-            <SelectItem value="已审计">已审计</SelectItem>
-            <SelectItem value="有更新">有更新</SelectItem>
-            <SelectItem value="检查失败">检查失败</SelectItem>
+            <SelectItem value="unaudited">未审计</SelectItem>
+            <SelectItem value="audited">已审计</SelectItem>
+            <SelectItem value="update">有更新</SelectItem>
+            <SelectItem value="error">检查失败</SelectItem>
           </SelectContent>
         </Select>
         <Select value={sortBy} onValueChange={setSortBy}>
@@ -360,7 +348,7 @@ export default function ProjectsPage() {
             <SelectItem value="status">状态</SelectItem>
           </SelectContent>
         </Select>
-        <Button variant="outline" size="sm" onClick={load} disabled={loading}>
+        <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
           <RefreshCwIcon className={loading ? "size-4 animate-spin" : "size-4"} />
           刷新
         </Button>
@@ -373,7 +361,7 @@ export default function ProjectsPage() {
             正在读取项目…
           </CardContent>
         </Card>
-      ) : filtered.length === 0 ? (
+      ) : projects.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center gap-4 py-16 text-center">
             <div className="bg-muted flex size-12 items-center justify-center rounded-full">
@@ -411,7 +399,7 @@ export default function ProjectsPage() {
                 </tr>
               </thead>
               <tbody>
-                {paged.map((p) => (
+                {projects.map((p) => (
                   <tr key={p.id} className="hover:bg-muted/30 border-t">
                     <td className="max-w-[22rem] px-3 py-2.5">
                       <Link href={`/function/projects/detail?id=${p.id}`} className="block min-w-0">
@@ -456,7 +444,7 @@ export default function ProjectsPage() {
             </table>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2 border-t px-3 py-2 text-xs">
-            <span className="text-muted-foreground">共 {filtered.length} 个项目 · 第 {page}/{pageCount} 页</span>
+            <span className="text-muted-foreground">共 {total} 个项目 · 第 {page}/{pageCount} 页</span>
             <div className="flex items-center gap-1">
               <Button variant="outline" size="xs" onClick={() => setPage((v) => Math.max(1, v - 1))} disabled={page <= 1}>上一页</Button>
               <Button variant="outline" size="xs" onClick={() => setPage((v) => Math.min(pageCount, v + 1))} disabled={page >= pageCount}>下一页</Button>
