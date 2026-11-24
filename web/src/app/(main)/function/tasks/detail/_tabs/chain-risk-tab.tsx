@@ -2,7 +2,10 @@
 
 import * as React from "react";
 
-import { GitBranchIcon, Loader2Icon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
+import { useRouter } from "next/navigation";
+
+import { GitBranchIcon, Loader2Icon, PlayIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
+import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -59,9 +62,11 @@ function fmtTime(value?: string) {
 }
 
 export function ChainRiskTab({ taskId }: { taskId: string }) {
+  const router = useRouter();
   const [observations, setObservations] = React.useState<TaskNode[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState("");
+  const [auditing, setAuditing] = React.useState<string | null>(null);
 
   const load = React.useCallback(() => {
     setLoading(true);
@@ -79,6 +84,27 @@ export function ChainRiskTab({ taskId }: { taskId: string }) {
     load();
   }, [load]);
 
+  const startAudit = React.useCallback(
+    async (ids: string[]) => {
+      if (ids.length === 0 || auditing) return;
+      setAuditing(ids.length === 1 ? ids[0] : "all");
+      try {
+        const result = await api.auditChainObservations(taskId, ids);
+        toast.success(
+          result.count === 1
+            ? "链式风险审计任务已创建"
+            : `已创建包含 ${result.count} 项链式风险的审计任务`,
+        );
+        router.push(`/function/tasks/detail?id=${result.task_id}`);
+      } catch (e) {
+        toast.error("开启链式风险审计失败：" + (e as Error).message);
+      } finally {
+        setAuditing(null);
+      }
+    },
+    [auditing, router, taskId],
+  );
+
   return (
     <div className="flex flex-col gap-4">
       <Card>
@@ -95,10 +121,20 @@ export function ChainRiskTab({ taskId }: { taskId: string }) {
                 后续需要人工确认是否创建跟进任务或合并到已有 finding。
               </CardDescription>
             </div>
-            <Button size="sm" variant="outline" onClick={load} disabled={loading}>
-              {loading ? <Loader2Icon className="size-4 animate-spin" /> : <RefreshCwIcon className="size-4" />}
-              刷新
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                onClick={() => void startAudit(observations.map((item) => item.id))}
+                disabled={loading || observations.length === 0 || auditing !== null}
+              >
+                {auditing === "all" ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}
+                一键审计全部
+              </Button>
+              <Button size="sm" variant="outline" onClick={load} disabled={loading || auditing !== null}>
+                {loading ? <Loader2Icon className="size-4 animate-spin" /> : <RefreshCwIcon className="size-4" />}
+                刷新
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -128,6 +164,20 @@ export function ChainRiskTab({ taskId }: { taskId: string }) {
                   {payload.confidence && <Badge variant="secondary">{payload.confidence}</Badge>}
                   <span className="text-muted-foreground text-[11px]">{node.origin || "worker"}</span>
                   <span className="text-muted-foreground text-[11px]">{fmtTime(node.ts)}</span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="ml-auto h-7"
+                    disabled={auditing !== null}
+                    onClick={() => void startAudit([node.id])}
+                  >
+                    {auditing === node.id ? (
+                      <Loader2Icon className="size-3.5 animate-spin" />
+                    ) : (
+                      <PlayIcon className="size-3.5" />
+                    )}
+                    开启审计
+                  </Button>
                 </div>
                 <p className="text-sm leading-5 font-medium">{summary}</p>
                 {endpoints.length > 0 && (

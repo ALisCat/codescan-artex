@@ -564,6 +564,10 @@ export const api = {
     get<{ observations: TaskNode[] | null }>(`/tasks/${id}/chain-observations`).then((r) =>
       arr(r.observations),
     ),
+  auditChainObservations: (id: string, observationIds: string[] = []) =>
+    post<{ task_id: number; count: number }>(`/tasks/${id}/chain-observations/audit`, {
+      observation_ids: observationIds,
+    }),
 
   // ---- 第三方依赖（Java jar / .m2）----
   // 清单：坐标/类数/大小/源码状态 + 当前反编译能力。后端只读库，不触发反编译。
