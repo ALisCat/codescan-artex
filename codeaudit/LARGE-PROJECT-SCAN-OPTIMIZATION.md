@@ -140,3 +140,8 @@ CallGraphDump / JavaParser：约 8 分 32 秒
 - 缓存位于 `data/cache/callgraph/<sha256>.json`，同一 commit 重试命中后跳过 JavaParser 阶段。
 - 已用 fixture 验证：首次 1.6s，命中 0.08s；大项目预计节省约 8 分钟。
 - 缓存版本 `callgraph-v2`；Java 工具升级时需提升版本号。
+
+### 旧 prepared 增量运行
+
+- 项目 3 的 prepared run `#14` 使用旧版无方法前缀的 cell key（`/api/...:vuln`）。
+- 已重新准备为 run `#32`，delta key 为 `GET /api/fullmatrix/lookup:authz` / `:sql-injection`；旧 run 标记为 cancelled，避免误启动。
