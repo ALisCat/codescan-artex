@@ -92,6 +92,34 @@ func (s *CellStore) Import(taskID int64, items []CellInput) (int, error) {
 		return 0, fmt.Errorf("task_id 无效")
 	}
 	n := 0
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`
+INSERT INTO ca_cells (task_id, cell_key, endpoint_url, method, vulnclass, eligibility,
+                      priority, bucket, direction, checklist, hints, hints_note,
+                      status, reason, trace)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15::jsonb)
+ON CONFLICT (task_id, cell_key) DO UPDATE SET
+    endpoint_url = EXCLUDED.endpoint_url,
+    method       = EXCLUDED.method,
+    vulnclass    = EXCLUDED.vulnclass,
+    eligibility  = EXCLUDED.eligibility,
+    priority     = EXCLUDED.priority,
+    bucket       = EXCLUDED.bucket,
+    direction    = EXCLUDED.direction,
+    checklist    = EXCLUDED.checklist,
+    hints        = EXCLUDED.hints,
+    hints_note   = EXCLUDED.hints_note,
+    reason       = EXCLUDED.reason,
+    trace        = EXCLUDED.trace,
+    updated_at   = now()`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
 	for _, it := range items {
 		if it.CellKey == "" || it.VulnClass == "" {
 			continue
@@ -126,11 +154,39 @@ func (s *CellStore) Import(taskID int64, items []CellInput) (int, error) {
 		if len(hints) == 0 || string(hints) == "null" {
 			hints = json.RawMessage(`{}`)
 		}
-		_, err := s.db.Exec(`
+		_, err := stmt.Exec(
+			taskID, it.CellKey, it.Endpoint.URL, it.Endpoint.Method, it.VulnClass, elig,
+			it.Priority, it.Bucket, direction, checklist, hints, it.HintsNote,
+			status, it.Reason, trace)
+		if err != nil {
+			return n, err
+		}
+		n++
+	}
+	if err := tx.Commit(); err != nil {
+		return n, err
+	}
+	return n, nil
+}
+
+// ImportSnapshot inserts target-matrix rows with provenance and settled
+// status. Unlike Import, it preserves status/verdict/evidence for inherited
+// cells and does not seed intents.
+func (s *CellStore) ImportSnapshot(taskID int64, items []CellSnapshotInput) (int, error) {
+	if taskID <= 0 {
+		return 0, fmt.Errorf("task_id 无效")
+	}
+	n := 0
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`
 INSERT INTO ca_cells (task_id, cell_key, endpoint_url, method, vulnclass, eligibility,
                       priority, bucket, direction, checklist, hints, hints_note,
-                      status, reason, trace)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15::jsonb)
+                      status, verdict, evidence, reason, trace, origin, source_task_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15::jsonb,$16,$17::jsonb,$18,$19)
 ON CONFLICT (task_id, cell_key) DO UPDATE SET
     endpoint_url = EXCLUDED.endpoint_url,
     method       = EXCLUDED.method,
@@ -144,26 +200,13 @@ ON CONFLICT (task_id, cell_key) DO UPDATE SET
     hints_note   = EXCLUDED.hints_note,
     reason       = EXCLUDED.reason,
     trace        = EXCLUDED.trace,
-    updated_at   = now()`,
-			taskID, it.CellKey, it.Endpoint.URL, it.Endpoint.Method, it.VulnClass, elig,
-			it.Priority, it.Bucket, direction, checklist, hints, it.HintsNote,
-			status, it.Reason, trace)
-		if err != nil {
-			return n, err
-		}
-		n++
+    origin       = EXCLUDED.origin,
+    source_task_id = EXCLUDED.source_task_id,
+    updated_at   = now()`)
+	if err != nil {
+		return 0, err
 	}
-	return n, nil
-}
-
-// ImportSnapshot inserts target-matrix rows with provenance and settled
-// status. Unlike Import, it preserves status/verdict/evidence for inherited
-// cells and does not seed intents.
-func (s *CellStore) ImportSnapshot(taskID int64, items []CellSnapshotInput) (int, error) {
-	if taskID <= 0 {
-		return 0, fmt.Errorf("task_id 无效")
-	}
-	n := 0
+	defer stmt.Close()
 	for _, item := range items {
 		it := item.Cell
 		if it.CellKey == "" || it.VulnClass == "" {
@@ -214,27 +257,7 @@ func (s *CellStore) ImportSnapshot(taskID int64, items []CellSnapshotInput) (int
 		if item.Verdict != "" {
 			verdict = item.Verdict
 		}
-		_, err := s.db.Exec(`
-INSERT INTO ca_cells (task_id, cell_key, endpoint_url, method, vulnclass, eligibility,
-                      priority, bucket, direction, checklist, hints, hints_note,
-                      status, verdict, evidence, reason, trace, origin, source_task_id)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15::jsonb,$16,$17::jsonb,$18,$19)
-ON CONFLICT (task_id, cell_key) DO UPDATE SET
-    endpoint_url = EXCLUDED.endpoint_url,
-    method       = EXCLUDED.method,
-    vulnclass    = EXCLUDED.vulnclass,
-    eligibility  = EXCLUDED.eligibility,
-    priority     = EXCLUDED.priority,
-    bucket       = EXCLUDED.bucket,
-    direction    = EXCLUDED.direction,
-    checklist    = EXCLUDED.checklist,
-    hints        = EXCLUDED.hints,
-    hints_note   = EXCLUDED.hints_note,
-    reason       = EXCLUDED.reason,
-    trace        = EXCLUDED.trace,
-    origin       = EXCLUDED.origin,
-    source_task_id = EXCLUDED.source_task_id,
-    updated_at   = now()`,
+		_, err := stmt.Exec(
 			taskID, it.CellKey, it.Endpoint.URL, it.Endpoint.Method, it.VulnClass, elig,
 			it.Priority, it.Bucket, direction, checklist, hints, it.HintsNote,
 			status, verdict, evidence, it.Reason, trace, origin, item.SourceTaskID)
@@ -242,6 +265,9 @@ ON CONFLICT (task_id, cell_key) DO UPDATE SET
 			return n, err
 		}
 		n++
+	}
+	if err := tx.Commit(); err != nil {
+		return n, err
 	}
 	return n, nil
 }
