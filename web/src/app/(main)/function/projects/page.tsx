@@ -99,8 +99,8 @@ export default function ProjectsPage() {
   const [statusFilter, setStatusFilter] = React.useState("all");
   const [sortBy, setSortBy] = React.useState("updated");
   const [page, setPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState(20);
   const [total, setTotal] = React.useState(0);
-  const pageSize = 20;
 
   const load = React.useCallback(
     (nextPage = page, nextQ = q, nextStatus = statusFilter, nextSort = sortBy) => {
@@ -117,7 +117,7 @@ export default function ProjectsPage() {
         .catch((e) => toast.error("读取项目失败：" + (e as Error).message))
         .finally(() => setLoading(false));
     },
-    [page, q, statusFilter, sortBy],
+    [page, pageSize, q, statusFilter, sortBy],
   );
 
   React.useEffect(() => {
@@ -348,6 +348,21 @@ export default function ProjectsPage() {
             <SelectItem value="status">状态</SelectItem>
           </SelectContent>
         </Select>
+        <div className="text-muted-foreground flex items-center gap-1 text-xs">
+          每页
+          <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
+            <SelectTrigger className="h-8 w-20">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="10">10</SelectItem>
+              <SelectItem value="20">20</SelectItem>
+              <SelectItem value="50">50</SelectItem>
+              <SelectItem value="100">100</SelectItem>
+            </SelectContent>
+          </Select>
+          条
+        </div>
         <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
           <RefreshCwIcon className={loading ? "size-4 animate-spin" : "size-4"} />
           刷新
