@@ -56,7 +56,10 @@ def run_java_sidecar(root: Path, out: Path) -> None:
     jars = sorted((CALLGRAPH_DIR / "lib").glob("*.jar"))
     cp = ":".join(str(p) for p in jars) + ":" + str(CALLGRAPH_DIR)
     out.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run([str(java), "-Xmx3g", "-cp", cp, "CallGraphDump", str(root), str(out)],
+    # 大型单体仓库（近万 Java 文件）在 3g 堆下会在 JavaParser/symbol solver
+    # 阶段触发 GC overhead limit；默认提高到 8g，仍可通过环境变量覆盖。
+    heap = os.environ.get("CODEAUDIT_JAVA_XMX", "8g").strip() or "8g"
+    subprocess.run([str(java), f"-Xmx{heap}", "-cp", cp, "CallGraphDump", str(root), str(out)],
                    cwd=str(CALLGRAPH_DIR), check=True)
 
 
