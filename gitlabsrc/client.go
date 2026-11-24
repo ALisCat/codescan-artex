@@ -265,18 +265,77 @@ func (c *Client) ListProjects(ctx context.Context, search string, page, perPage 
 	if perPage <= 0 || perPage > 100 {
 		perPage = 50
 	}
+	search = strings.TrimSpace(search)
+	out, err := c.listProjectsPage(ctx, search, page, perPage)
+	if err != nil {
+		return nil, err
+	}
+	if search == "" || len(out) > 0 {
+		return out, nil
+	}
+	// GitLab's server-side search tokenizes paths (for example "gx" may miss
+	// "CBD/gxmuyfy-..."). If it returns nothing, fall back to a local substring
+	// match over all accessible projects so partial path searches still work.
+	all, err := c.listAccessibleProjects(ctx)
+	if err != nil {
+		return nil, err
+	}
+	needle := strings.ToLower(search)
+	matched := make([]Project, 0)
+	for _, project := range all {
+		if strings.Contains(strings.ToLower(project.Name), needle) ||
+			strings.Contains(strings.ToLower(project.PathWithNamespace), needle) {
+			matched = append(matched, project)
+		}
+	}
+	start := (page - 1) * perPage
+	if start >= len(matched) {
+		return []Project{}, nil
+	}
+	end := start + perPage
+	if end > len(matched) {
+		end = len(matched)
+	}
+	return matched[start:end], nil
+}
+
+func (c *Client) listProjectsPage(ctx context.Context, search string, page, perPage int) ([]Project, error) {
 	q := url.Values{}
 	q.Set("membership", "true")
 	q.Set("simple", "true")
 	q.Set("archived", "false")
 	q.Set("per_page", fmt.Sprintf("%d", perPage))
 	q.Set("page", fmt.Sprintf("%d", page))
-	if strings.TrimSpace(search) != "" {
-		q.Set("search", strings.TrimSpace(search))
+	if search != "" {
+		q.Set("search", search)
 	}
 	var out []Project
 	if err := c.request(ctx, http.MethodGet, "/projects?"+q.Encode(), &out); err != nil {
 		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) listAccessibleProjects(ctx context.Context) ([]Project, error) {
+	const perPage = 100
+	const maxPages = 200
+	out := make([]Project, 0)
+	seen := make(map[int64]bool)
+	for page := 1; page <= maxPages; page++ {
+		batch, err := c.listProjectsPage(ctx, "", page, perPage)
+		if err != nil {
+			return nil, err
+		}
+		for _, project := range batch {
+			if project.ID == 0 || seen[project.ID] {
+				continue
+			}
+			seen[project.ID] = true
+			out = append(out, project)
+		}
+		if len(batch) < perPage {
+			break
+		}
 	}
 	return out, nil
 }
