@@ -145,3 +145,12 @@ CallGraphDump / JavaParser：约 8 分 32 秒
 
 - 项目 3 的 prepared run `#14` 使用旧版无方法前缀的 cell key（`/api/...:vuln`）。
 - 已重新准备为 run `#32`，delta key 为 `GET /api/fullmatrix/lookup:authz` / `:sql-injection`；旧 run 标记为 cancelled，避免误启动。
+
+### 项目 13 标准档受控重扫（2026-11-24 18:04）
+
+- run `#33` / task `#491`，target `cf860b5`，标准档，auto_start=true。
+- 源码下载/解压约 1 分钟；CallGraph 冷启动 8m41s，已写入缓存。
+- 分析器 1m54s、绑定+导入约 41s；从发起到任务运行总计约 12m50s。
+- 矩阵 54523 格；标准档可审计 1665 格，生成 623 个聚合意图，与预估完全一致。
+- N/A 延迟导入 45675 格，任务启动后约 29 秒补齐；后台导入前矩阵统计会暂时偏小。
+- 3 个 worker 已领取前 3 个意图，任务运行中；预计约 6.9 小时。
