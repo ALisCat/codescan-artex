@@ -925,10 +925,17 @@ function DetailInner() {
                 </div>
               )}
 
-              <div className={`mt-3 grid gap-3 ${autoRiskRows.length > 0 && (preparedRun.delta_gaps?.length ?? 0) > 0 ? "lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]" : ""}`}>
-                {autoRiskRows.length > 0 && (
-                  <div className="overflow-hidden rounded-md border bg-background/60">
-                    <div className="border-b px-3 py-2 text-xs font-medium">增量分析 · 自动发现的风险类型</div>
+              <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
+                <div className="overflow-hidden rounded-md border bg-background/60">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2 text-xs font-medium">
+                    <span>增量分析 · 自动发现的风险类型</span>
+                    <span className="text-muted-foreground font-normal">
+                      {autoRiskEndpoints.size} 个接口 · {autoRiskRows.reduce((n, row) => n + row.cells.length, 0)} 项
+                    </span>
+                  </div>
+                  {autoRiskRows.length === 0 ? (
+                    <div className="text-muted-foreground px-3 py-3 text-[11px]">本次没有自动发现的风险类型。</div>
+                  ) : (
                     <table className="w-full text-left text-[11px]">
                       <thead className="text-muted-foreground border-b">
                         <tr>
@@ -964,136 +971,149 @@ function DetailInner() {
                         ))}
                       </tbody>
                     </table>
-                  </div>
-                )}
+                  )}
+                </div>
 
-                {(preparedRun.delta_gaps?.length ?? 0) > 0 && (
+                <div className="grid gap-3">
                   <div className="overflow-hidden rounded-md border bg-background/60">
-                    <div className="border-b px-3 py-2 text-xs font-medium">新增/变更接口 · 人工指定审计类型</div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2 text-xs font-medium">
+                      <span>新增/变更接口 · 人工指定审计类型</span>
+                      <span className="text-muted-foreground font-normal">
+                        {preparedRun.delta_gaps?.length ?? 0} 个接口
+                      </span>
+                    </div>
                     <div className="space-y-1.5 p-2">
-                      <div className="text-muted-foreground px-1 pb-1 text-[11px]">
-                        这些接口当前矩阵全部 N/A；选择或输入类型后，点击「开始增量审计」会把对应格加入任务。
-                      </div>
-                      {gapCells.length === 0 ? (
-                        <div className="text-muted-foreground p-1 font-mono text-[11px]">
-                          {preparedRun.delta_gaps.join("、")}
-                        </div>
+                      {(preparedRun.delta_gaps?.length ?? 0) === 0 ? (
+                        <div className="text-muted-foreground px-1 py-2 text-[11px]">本次没有审计缺口。</div>
                       ) : (
-                        Object.entries(
-                          gapCells.reduce<Record<string, { method: string; url: string; cells: IncrementalGapCell[] }>>((acc, cell) => {
-                            const key = `${cell.method} ${cell.url}`;
-                            if (!acc[key]) acc[key] = { method: cell.method, url: cell.url, cells: [] };
-                            acc[key].cells.push(cell);
-                            return acc;
-                          }, {}),
-                        ).map(([label, group]) => (
-                          <div key={label} className="flex flex-wrap items-center justify-between gap-2 rounded border bg-background/60 px-2 py-1.5">
+                        <>
+                          <div className="text-muted-foreground px-1 pb-1 text-[11px]">
+                            这些接口当前矩阵全部 N/A；选择或输入类型后，点击「开始增量审计」会把对应格加入任务。
+                          </div>
+                          {gapCells.length === 0 ? (
+                            <div className="text-muted-foreground p-1 font-mono text-[11px]">
+                              {preparedRun.delta_gaps.join("、")}
+                            </div>
+                          ) : (
+                            Object.entries(
+                              gapCells.reduce<Record<string, { method: string; url: string; cells: IncrementalGapCell[] }>>((acc, cell) => {
+                                const key = `${cell.method} ${cell.url}`;
+                                if (!acc[key]) acc[key] = { method: cell.method, url: cell.url, cells: [] };
+                                acc[key].cells.push(cell);
+                                return acc;
+                              }, {}),
+                            ).map(([label, group]) => (
+                              <div key={label} className="flex flex-wrap items-center justify-between gap-2 rounded border bg-background/60 px-2 py-1.5">
+                                <span className="min-w-0 break-all font-mono text-[11px]">
+                                  <span className="mr-1 font-sans text-muted-foreground">{group.method}</span>
+                                  {group.url}
+                                </span>
+                                <>
+                                  <input
+                                    list={`vuln-options-${label.replace(/[^a-zA-Z0-9_-]/g, "_")}`}
+                                    className="h-7 w-48 rounded border bg-background px-2 text-xs"
+                                    placeholder="选择或输入漏洞类型"
+                                    value={manualSelections[label] ?? ""}
+                                    onChange={(e) =>
+                                      setManualSelections((prev) => ({ ...prev, [label]: e.target.value }))
+                                    }
+                                  />
+                                  <datalist id={`vuln-options-${label.replace(/[^a-zA-Z0-9_-]/g, "_")}`}>
+                                    {group.cells.map((cell) => (
+                                      <option key={cell.cell_key} value={vulnLabel(cell.vulnclass)} />
+                                    ))}
+                                  </datalist>
+                                </>
+                              </div>
+                            ))
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="overflow-hidden rounded-md border border-amber-500/30 bg-background/60">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/20 px-3 py-2">
+                      <div className="text-xs font-medium">
+                        新增适用格 · 人工确认
+                        <span className="text-muted-foreground ml-2 font-normal">
+                          已选 {selectedNewKeys.size} / {newApplicableCells.length}
+                        </span>
+                      </div>
+                      <div className="flex gap-1">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-2 text-[11px]"
+                          onClick={() => setSelectedNewKeys(new Set(newApplicableCells.map((cell) => cell.cell_key)))}
+                        >
+                          全选
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-2 text-[11px]"
+                          onClick={() => setSelectedNewKeys(new Set())}
+                        >
+                          清空
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="text-muted-foreground border-b border-border/60 px-3 py-1.5 text-[11px]">
+                      分析器认为可能适用，但没有命中本次变更行。默认不审计；勾选后纳入本次审计。
+                    </div>
+                    <div className="space-y-1.5 p-2">
+                      {newApplicableRows.length === 0 ? (
+                        <div className="text-muted-foreground px-1 py-2 text-[11px]">本次没有新增适用格。</div>
+                      ) : (
+                        newApplicableRows.map((row) => (
+                          <div
+                            key={row.label}
+                            className="flex flex-wrap items-center justify-between gap-2 rounded border bg-background/60 px-2 py-1.5"
+                          >
                             <span className="min-w-0 break-all font-mono text-[11px]">
-                              <span className="mr-1 font-sans text-muted-foreground">{group.method}</span>
-                              {group.url}
+                              <span className="mr-1 font-sans text-muted-foreground">{row.method}</span>
+                              {row.url}
                             </span>
-                            <>
-                              <input
-                                list={`vuln-options-${label.replace(/[^a-zA-Z0-9_-]/g, "_")}`}
-                                className="h-7 w-48 rounded border bg-background px-2 text-xs"
-                                placeholder="选择或输入漏洞类型"
-                                value={manualSelections[label] ?? ""}
-                                onChange={(e) =>
-                                  setManualSelections((prev) => ({ ...prev, [label]: e.target.value }))
-                                }
-                              />
-                              <datalist id={`vuln-options-${label.replace(/[^a-zA-Z0-9_-]/g, "_")}`}>
-                                {group.cells.map((cell) => (
-                                  <option key={cell.cell_key} value={vulnLabel(cell.vulnclass)} />
-                                ))}
-                              </datalist>
-                            </>
+                            <div className="flex flex-wrap gap-1">
+                              {row.cells.map((cell) => {
+                                const checked = selectedNewKeys.has(cell.cell_key);
+                                return (
+                                  <label
+                                    key={cell.cell_key}
+                                    className={`inline-flex cursor-pointer items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] ${
+                                      checked
+                                        ? "border-amber-500/50 bg-amber-500/10 text-amber-800 dark:text-amber-200"
+                                        : "border-border bg-background/60 text-muted-foreground"
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      className="size-3 accent-amber-600"
+                                      checked={checked}
+                                      onChange={() => {
+                                        setSelectedNewKeys((prev) => {
+                                          const next = new Set(prev);
+                                          if (next.has(cell.cell_key)) next.delete(cell.cell_key);
+                                          else next.add(cell.cell_key);
+                                          return next;
+                                        });
+                                      }}
+                                    />
+                                    {vulnLabel(cell.vulnclass)}
+                                  </label>
+                                );
+                              })}
+                            </div>
                           </div>
                         ))
                       )}
                     </div>
                   </div>
-                )}
-              </div>
-
-              {newApplicableRows.length > 0 && (
-                <div className="mt-3 overflow-hidden rounded-md border border-amber-500/30 bg-background/60">
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/20 px-3 py-2">
-                    <div className="text-xs font-medium">
-                      新增适用格 · 人工确认
-                      <span className="text-muted-foreground ml-2 font-normal">
-                        已选 {selectedNewKeys.size} / {newApplicableCells.length}
-                      </span>
-                    </div>
-                    <div className="flex gap-1">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 px-2 text-[11px]"
-                        onClick={() => setSelectedNewKeys(new Set(newApplicableCells.map((cell) => cell.cell_key)))}
-                      >
-                        全选
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 px-2 text-[11px]"
-                        onClick={() => setSelectedNewKeys(new Set())}
-                      >
-                        清空
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="text-muted-foreground border-b border-border/60 px-3 py-1.5 text-[11px]">
-                    分析器认为可能适用，但没有命中本次变更行。默认不审计；勾选后纳入本次审计。
-                  </div>
-                  <div className="space-y-1.5 p-2">
-                    {newApplicableRows.map((row) => (
-                      <div
-                        key={row.label}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded border bg-background/60 px-2 py-1.5"
-                      >
-                        <span className="min-w-0 break-all font-mono text-[11px]">
-                          <span className="mr-1 font-sans text-muted-foreground">{row.method}</span>
-                          {row.url}
-                        </span>
-                        <div className="flex flex-wrap gap-1">
-                          {row.cells.map((cell) => {
-                            const checked = selectedNewKeys.has(cell.cell_key);
-                            return (
-                              <label
-                                key={cell.cell_key}
-                                className={`inline-flex cursor-pointer items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] ${
-                                  checked
-                                    ? "border-amber-500/50 bg-amber-500/10 text-amber-800 dark:text-amber-200"
-                                    : "border-border bg-background/60 text-muted-foreground"
-                                }`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  className="size-3 accent-amber-600"
-                                  checked={checked}
-                                  onChange={() => {
-                                    setSelectedNewKeys((prev) => {
-                                      const next = new Set(prev);
-                                      if (next.has(cell.cell_key)) next.delete(cell.cell_key);
-                                      else next.add(cell.cell_key);
-                                      return next;
-                                    });
-                                  }}
-                                />
-                                {vulnLabel(cell.vulnclass)}
-                              </label>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
                 </div>
-              )}
+              </div>
 
               {preparedRun.base_task_id && (
                 <div className="text-muted-foreground mt-2 text-xs">
