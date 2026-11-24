@@ -358,7 +358,7 @@ export default function TasksPage() {
   );
   const { field: sortField, direction: sortDirection } = sortPreference;
   const [page, setPage] = React.useState(1);
-  const [pageSize, setPageSize] = React.useState(20);
+  const [pageSize, setPageSize] = React.useState(10);
   const [nowSec, setNowSec] = React.useState(() => Math.floor(Date.now() / 1000));
   const [batchControlling, setBatchControlling] = React.useState<"pause" | "resume" | null>(null);
   const [movingCategory, setMovingCategory] = React.useState(false);
@@ -1854,7 +1854,7 @@ function TaskArchivesPanel({ onChanged }: { onChanged: () => void }) {
   const [query, setQuery] = React.useState("");
   const [stateFilter, setStateFilter] = React.useState("all");
   const [page, setPage] = React.useState(1);
-  const [pageSize, setPageSize] = React.useState(20);
+  const [pageSize, setPageSize] = React.useState(10);
   const [total, setTotal] = React.useState(0);
   const [selected, setSelected] = React.useState<Set<number>>(() => new Set());
   const [loading, setLoading] = React.useState(true);
