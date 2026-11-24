@@ -27,7 +27,7 @@ def main():
     rows = []
     for c in cells:
         ep = c["endpoint"]
-        key = "%s:%s" % (ep["url"], c["vulnclass"])
+        key = "%s %s:%s" % (ep.get("method", ""), ep["url"], c["vulnclass"])
         state = c["state"]
         t = by_id.get(key)
         if state == "possible" and t:

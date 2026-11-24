@@ -23,7 +23,7 @@ func TestSelectDeltaCellsUsesMethodLineRanges(t *testing.T) {
 		"flow": []map[string]any{{"file": "src/AppointmentController.java", "line": 10, "end": 20}},
 	})
 	body := importCellsBody{Tasks: []db.CellInput{{
-		CellKey: "/api/appointment/list:authz", VulnClass: "authz", Eligibility: "applicable",
+		CellKey: "GET /api/appointment/list:authz", VulnClass: "authz", Eligibility: "applicable",
 		Hints: hints, Endpoint: struct {
 			Method  string `json:"method"`
 			URL     string `json:"url"`
@@ -33,7 +33,7 @@ func TestSelectDeltaCellsUsesMethodLineRanges(t *testing.T) {
 	hit := selectDeltaCells(body, incrementalDelta{ChangedRanges: map[string][]lineRange{
 		"src/appointmentcontroller.java": {{Start: 12, End: 12}},
 	}})
-	if len(hit.Keys) != 1 || hit.Keys[0] != "/api/appointment/list:authz" {
+	if len(hit.Keys) != 1 || hit.Keys[0] != "GET /api/appointment/list:authz" {
 		t.Fatalf("method change did not select cell: %#v", hit)
 	}
 	comment := selectDeltaCells(body, incrementalDelta{ChangedRanges: map[string][]lineRange{
@@ -49,7 +49,7 @@ func TestSelectDeltaCellsReportsNewEndpointGap(t *testing.T) {
 		"flow": []map[string]any{{"file": "src/MultiCommitTestController.java", "line": 10, "end": 14}},
 	})
 	body := importCellsBody{Tasks: []db.CellInput{{
-		CellKey: "/api/multi/ping:authz", VulnClass: "authz", Eligibility: "not_applicable",
+		CellKey: "GET /api/multi/ping:authz", VulnClass: "authz", Eligibility: "not_applicable",
 		Hints: hints, Endpoint: struct {
 			Method  string `json:"method"`
 			URL     string `json:"url"`

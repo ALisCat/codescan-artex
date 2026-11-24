@@ -1154,12 +1154,96 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	if t := s.m.ActiveTask(); t != nil {
 		active = t.ID
 	}
+	q := r.URL.Query()
+	all := q.Get("all") == "1"
+	paged := !all && (q.Get("page") != "" || q.Get("size") != "" || q.Get("q") != "" ||
+		q.Get("status") != "" || q.Get("category") != "" || q.Get("sort") != "" || q.Get("direction") != "")
+
+	if paged {
+		page, _ := strconv.Atoi(q.Get("page"))
+		if page <= 0 {
+			page = 1
+		}
+		size, _ := strconv.Atoi(q.Get("size"))
+		if size <= 0 {
+			size = 10
+		}
+		if size > 100 {
+			size = 100
+		}
+		scope := db.TaskListScope{All: me == nil || me.IsAdmin}
+		if me != nil {
+			scope.UserID = me.ID
+			for _, membership := range me.Departments {
+				scope.DepartmentIDs = append(scope.DepartmentIDs, membership.DepartmentID)
+			}
+		}
+		pageData, err := s.m.PG().ListTaskIDsPage(scope, db.TaskListQuery{
+			Q: q.Get("q"), Status: q.Get("status"), Category: q.Get("category"),
+			Sort: q.Get("sort"), Direction: q.Get("direction"), Page: page, Size: size,
+		})
+		if err != nil {
+			writeErr(w, 500, "读取任务列表失败："+err.Error())
+			return
+		}
+		tasks := make([]*Task, 0, len(pageData.IDs))
+		explorationIDs := make([]int64, 0, len(pageData.IDs))
+		for _, id := range pageData.IDs {
+			t, ok := s.m.Task(strconv.FormatInt(id, 10))
+			if !ok {
+				continue
+			}
+			tasks = append(tasks, t)
+			explorationIDs = append(explorationIDs, t.ExpID)
+		}
+		metrics, _ := s.m.PG().TaskListMetricsByExplorationIDs(explorationIDs)
+		archiveBlockers, _ := s.m.PG().TaskArchiveBlockers()
+		dtos := make([]TaskDTO, 0, len(tasks))
+		canWriteAny := false
+		for _, t := range tasks {
+			access := s.taskAccessFor(me, t)
+			dto := taskDTO(t, s.resolvedTaskStatus(t))
+			dto.CanWrite = access.Write
+			metric := metrics[t.ExpID]
+			dto.Tokens = tokenTotalDTO(metric.Tokens)
+			dto.LastActivity = metric.LastActivity
+			if live := s.engine.LastActivity(t.ID); live > dto.LastActivity {
+				dto.LastActivity = live
+			}
+			dto.GoalsTotal = metric.Goals.Total
+			dto.GoalsMet = metric.Goals.Met
+			dto.InFlight = metric.RunningIntents
+			dto.Findings = FindingSeverityDTO{
+				Critical: metric.Findings.Critical,
+				High:     metric.Findings.High,
+				Medium:   metric.Findings.Medium,
+				Low:      metric.Findings.Low,
+			}
+			applyTaskArchiveBlocker(&dto, archiveBlockers)
+			if dto.CanWrite {
+				canWriteAny = true
+			}
+			dtos = append(dtos, dto)
+		}
+		writeJSON(w, 200, map[string]any{
+			"tasks":         dtos,
+			"active":        active,
+			"total":         pageData.Total,
+			"all_total":     pageData.AllTotal,
+			"page":          page,
+			"size":          size,
+			"can_write_any": canWriteAny,
+		})
+		return
+	}
+
+	// 没有翻页/筛选参数时保留原来的全量返回：Dashboard、分类管理、关联任务
+	// 选择器依赖完整列表；只有任务列表页显式带 page/size 才走分页。
 	list := s.m.List()
 	metrics, _ := s.m.PG().TaskListMetricsAll()
 	archiveBlockers, _ := s.m.PG().TaskArchiveBlockers()
 	dtos := make([]TaskDTO, 0, len(list))
 	for _, t := range list {
-		// 可见范围：管理员=全部；普通用户=所属部门下的任务 + 自己创建的任务。
 		access := s.taskAccessFor(me, t)
 		if me != nil && !access.View {
 			continue
@@ -1168,8 +1252,6 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		dto.CanWrite = access.Write
 		metric := metrics[t.ExpID]
 		dto.Tokens = tokenTotalDTO(metric.Tokens)
-		// prefer the live in-memory heartbeat (fresher) and fall back to the
-		// persisted max activity time (survives restarts) for run-duration display.
 		dto.LastActivity = metric.LastActivity
 		if live := s.engine.LastActivity(t.ID); live > dto.LastActivity {
 			dto.LastActivity = live
@@ -1183,18 +1265,9 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 			Medium:   metric.Findings.Medium,
 			Low:      metric.Findings.Low,
 		}
+		applyTaskArchiveBlocker(&dto, archiveBlockers)
 		dtos = append(dtos, dto)
 	}
-
-	// 没有翻页/筛选参数时保留原来的全量返回：Dashboard、分类管理、关联任务
-	// 选择器依赖完整列表；只有任务列表页显式带 page/size 才走分页。
-	q := r.URL.Query()
-	all := q.Get("all") == "1"
-	paged := !all && (q.Get("page") != "" || q.Get("size") != "" || q.Get("q") != "" ||
-		q.Get("status") != "" || q.Get("category") != "" || q.Get("sort") != "" || q.Get("direction") != "")
-	allTotal := len(dtos)
-	total := allTotal
-	page, size := 1, 0
 	canWriteAny := false
 	for _, dto := range dtos {
 		if dto.CanWrite {
@@ -1202,50 +1275,13 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	if paged {
-		page, _ = strconv.Atoi(q.Get("page"))
-		if page <= 0 {
-			page = 1
-		}
-		size, _ = strconv.Atoi(q.Get("size"))
-		if size <= 0 {
-			size = 10
-		}
-		if size > 100 {
-			size = 100
-		}
-		dtos = filterTaskDTOs(dtos, q.Get("q"), q.Get("status"), q.Get("category"))
-		total = len(dtos)
-		canWriteAny = false
-		for _, dto := range dtos {
-			if dto.CanWrite {
-				canWriteAny = true
-				break
-			}
-		}
-		sortTaskDTOs(dtos, q.Get("sort"), q.Get("direction"), time.Now().Unix())
-		start := (page - 1) * size
-		if start > len(dtos) {
-			start = len(dtos)
-		}
-		end := start + size
-		if end > len(dtos) {
-			end = len(dtos)
-		}
-		dtos = dtos[start:end]
-	} else {
-		size = len(dtos)
-	}
-	for i := range dtos {
-		applyTaskArchiveBlocker(&dtos[i], archiveBlockers)
-	}
 	writeJSON(w, 200, map[string]any{
 		"tasks":         dtos,
 		"active":        active,
-		"total":         total,
-		"all_total":     allTotal,
-		"page":          page,
-		"size":          size,
+		"total":         len(dtos),
+		"all_total":     len(dtos),
+		"page":          1,
+		"size":          len(dtos),
 		"can_write_any": canWriteAny,
 	})
 }

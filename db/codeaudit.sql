@@ -39,3 +39,10 @@ ALTER TABLE ca_cells ADD COLUMN IF NOT EXISTS attempts   INT  NOT NULL DEFAULT 0
 ALTER TABLE ca_cells ADD COLUMN IF NOT EXISTS last_error TEXT NOT NULL DEFAULT '';
 ALTER TABLE ca_cells ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'matrix';
 ALTER TABLE ca_cells ADD COLUMN IF NOT EXISTS source_task_id BIGINT;
+
+-- v0.5：cell_key 带 HTTP 方法，避免同一路径 GET/POST 的格互相覆盖。
+-- 旧键保持可读；本迁移每次启动幂等执行。
+UPDATE ca_cells
+SET cell_key = method || ' ' || cell_key
+WHERE method <> ''
+  AND cell_key !~* '^(GET|POST|PUT|PATCH|DELETE|ANY|REPO) ';

@@ -108,7 +108,7 @@ def _bucket(p, state):
 
 
 def _task_id(endpoint, vuln):
-    return "%s:%s" % (endpoint["url"], vuln)
+    return "%s %s:%s" % (endpoint.get("method", ""), endpoint["url"], vuln)
 
 
 def _direction(endpoint, vuln):

@@ -267,7 +267,7 @@ func (s *Server) caManualAddCell(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "读取格子失败: "+err.Error())
 		return
 	}
-	cellKey := url + ":" + vulnclass
+	cellKey := method + " " + url + ":" + vulnclass
 	c, _ := s.m.PG().Cells().Get(taskID, cellKey)
 	added := false
 	var flowCount int
@@ -881,7 +881,7 @@ func (s *Server) resolveMatrixIntent(t *Task, spec agent.IntentSpec) (*agent.Res
 	}
 	keys := append([]string{}, spec.CellKeys...)
 	for _, tgt := range spec.Targets {
-		key := strings.TrimSpace(tgt.URL) + ":" + strings.TrimSpace(tgt.VulnClass)
+		key := strings.ToUpper(strings.TrimSpace(tgt.Method)) + " " + strings.TrimSpace(tgt.URL) + ":" + strings.TrimSpace(tgt.VulnClass)
 		if strings.TrimSpace(tgt.URL) == "" || strings.TrimSpace(tgt.VulnClass) == "" {
 			continue
 		}
@@ -1015,7 +1015,7 @@ func (s *Server) recordWorkerObservation(t *Task, spec agent.ObservationSpec) (a
 	if err != nil {
 		return agent.ObservationResult{}, err
 	}
-	cellKey := url + ":" + vuln
+	cellKey := method + " " + url + ":" + vuln
 	inScope := false
 	var existing *db.Cell
 	var template *db.Cell

@@ -15,7 +15,7 @@ tasks = json.load(open(tasks_path))
 tm = {}
 for t in tasks:
     ep = t.get("endpoint") or {}
-    key = f"{ep.get('asset_id') or ep.get('url')}:{t.get('vulnclass')}"
+    key = f"{ep.get('method') or ''} {ep.get('asset_id') or ep.get('url')}:{t.get('vulnclass')}"
     tm[key] = t
 
 out = []
@@ -23,7 +23,7 @@ for c in cells:
     ep = c.get("endpoint") or {}
     vuln = c.get("vulnclass")
     aid = ep.get("asset_id")
-    key = f"{aid or ep.get('url')}:{vuln}"
+    key = f"{ep.get('method') or ''} {aid or ep.get('url')}:{vuln}"
     elig = c.get("eligibility")
     t = tm.get(key)
     row = {

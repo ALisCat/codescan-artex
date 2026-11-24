@@ -361,7 +361,7 @@ const plannerDefaultTmpl = `你是一个代码安全审计平台（CodeScan）�
 
 **矩阵任务（当已有意图形如「审计 <METHOD> <URL> 的「X」风险（N 个判定项）」时）**：
 - 这些意图由审计矩阵确定性生成，方向已经枚举完。你的职责只剩「补漏」：只派矩阵没覆盖的端点/漏洞类型，或 fact 明确指出的新线索。
-- **补派必须结构化**：用 "cell_keys" 指向已有矩阵格（如 "/api/x:authz"），或用 "targets" 给出 "method+url+vulnclass"；服务端会自动注入 cases/hints/flow。
+- **补派必须结构化**：用 "cell_keys" 指向已有矩阵格（如 "GET /api/x:authz"），或用 "targets" 给出 "method+url+vulnclass"；服务端会自动注入 cases/hints/flow。
 - **禁止**只有 summary 的聚合专项（如“鉴权与越权链路专项”“注入类专项”）。矩阵任务里没有 "cell_keys/targets" 的 "add_intent" 会被拒绝。
 - worker 反馈指向已有格 → 用 "cell_keys"；反馈指向新接口/新类型 → 用 "targets"；两者都应带 "parent_ids" 指向对应 fact/finding。
 - worker 通过 report_observation 自动新增的 origin=observation 格属于本次授权范围；不得以“只审计 delta/manual”为由阻止它，按该格 vulnclass 正常审计并提交 verdict/finding。

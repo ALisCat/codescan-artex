@@ -809,7 +809,7 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 			writeErr(w, 400, "人工新增接口路径需要以 / 开头")
 			return
 		}
-		cellKey := url + ":" + vuln
+		cellKey := method + " " + url + ":" + vuln
 		if manualNewKeys[cellKey] {
 			continue
 		}
@@ -901,7 +901,7 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		if len(parts) != 2 {
 			continue
 		}
-		cellKey := parts[1] + ":" + vuln
+		cellKey := parts[0] + " " + parts[1] + ":" + vuln
 		if imported[cellKey] {
 			continue
 		}
@@ -924,7 +924,7 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		imported[cellKey] = true
 	}
 	for _, spec := range manualNewSpecs {
-		cellKey := spec.URL + ":" + spec.VulnClass
+		cellKey := spec.Method + " " + spec.URL + ":" + spec.VulnClass
 		if imported[cellKey] {
 			continue
 		}

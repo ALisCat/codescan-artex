@@ -13,7 +13,7 @@ func TestMatrixIntentIsStructured(t *testing.T) {
 		want bool
 	}{
 		{"summary only", agent.IntentSpec{Summary: "鉴权与越权链路专项"}, false},
-		{"cell keys", agent.IntentSpec{CellKeys: []string{"/api/x:authz"}}, true},
+		{"cell keys", agent.IntentSpec{CellKeys: []string{"GET /api/x:authz"}}, true},
 		{"targets", agent.IntentSpec{Targets: []agent.IntentTarget{{Method: "POST", URL: "/api/x", VulnClass: "authz"}}}, true},
 		{"repo", agent.IntentSpec{Scope: "repo", Files: []string{"TokenUtil.java"}}, true},
 		{"pattern", agent.IntentSpec{Scope: "pattern", Pattern: "MyBatis ${} 插值", Files: []string{"UserMapper.xml"}}, true},

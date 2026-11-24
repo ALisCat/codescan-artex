@@ -737,3 +737,137 @@ DELETE FROM assets a USING deletable d WHERE a.id=d.id`, id, expID)
 	}
 	return result, tx.Commit()
 }
+
+// TaskListScope defines the visibility filter for the paged task list.
+type TaskListScope struct {
+	All           bool
+	UserID        int64
+	DepartmentIDs []int64
+}
+
+// TaskListQuery is the server-side filter/sort/page input for the task list.
+type TaskListQuery struct {
+	Q         string
+	Status    string
+	Category  string
+	Sort      string
+	Direction string
+	Page      int
+	Size      int
+}
+
+// TaskListPage is the lightweight result used before hydrating one page of DTOs.
+type TaskListPage struct {
+	IDs      []int64
+	Total    int
+	AllTotal int
+}
+
+// ListTaskIDsPage filters, sorts and pages task ids in PostgreSQL. Full task
+// hydration and metrics are intentionally limited to this page by the caller.
+func (d *DB) ListTaskIDsPage(scope TaskListScope, q TaskListQuery) (TaskListPage, error) {
+	if q.Page <= 0 {
+		q.Page = 1
+	}
+	if q.Size <= 0 {
+		q.Size = 10
+	}
+	if q.Size > 100 {
+		q.Size = 100
+	}
+	args := []any{scope.All, scope.UserID, scope.DepartmentIDs}
+	// PostgreSQL cannot infer an empty bigint[] through ANY($3) in every driver;
+	// pass NULLIF-style empty array explicitly.
+	if len(scope.DepartmentIDs) == 0 {
+		args[2] = []int64{}
+	}
+	where := []string{"task.deleted_at IS NULL"}
+	where = append(where, "($1::boolean OR task.created_by = $2 OR task.department_id = ANY($3::bigint[]))")
+	addArg := func(v any) int {
+		args = append(args, v)
+		return len(args)
+	}
+	if q.Q != "" {
+		n := addArg("%" + q.Q + "%")
+		where = append(where, fmt.Sprintf("(task.name ILIKE $%d OR COALESCE(category.name,'') ILIKE $%d OR task.description ILIKE $%d OR task.goal ILIKE $%d OR task.id::text ILIKE $%d)", n, n, n, n, n))
+	}
+	statusExpr := `CASE
+		WHEN task.status IN ('done','failed','timeout') THEN task.status
+		WHEN task.queued THEN 'queued'
+		WHEN task.paused THEN 'paused'
+		ELSE task.status END`
+	if q.Status != "" {
+		n := addArg(q.Status)
+		where = append(where, fmt.Sprintf("(%s) = $%d", statusExpr, n))
+	}
+	if q.Category == "uncategorized" {
+		where = append(where, "task.category_id IS NULL")
+	} else if q.Category != "" && q.Category != "all" {
+		if categoryID, err := strconv.ParseInt(q.Category, 10, 64); err == nil {
+			n := addArg(categoryID)
+			where = append(where, fmt.Sprintf("task.category_id = $%d", n))
+		}
+	}
+	clause := strings.Join(where, " AND ")
+	from := `FROM tasks task LEFT JOIN task_categories category ON category.id = task.category_id`
+
+	var allTotal, total int
+	if err := d.QueryRow(`SELECT count(*) `+from+` WHERE task.deleted_at IS NULL AND ($1::boolean OR task.created_by = $2 OR task.department_id = ANY($3::bigint[]))`, args[:3]...).Scan(&allTotal); err != nil {
+		return TaskListPage{}, err
+	}
+	if err := d.QueryRow(`SELECT count(*) `+from+` WHERE `+clause, args...).Scan(&total); err != nil {
+		return TaskListPage{}, err
+	}
+
+	order := "task.id"
+	switch q.Sort {
+	case "created":
+		order = "task.created_at"
+	case "status":
+		order = `CASE
+			WHEN task.status = 'created' THEN 0
+			WHEN task.queued THEN 1
+			WHEN task.status = 'running' THEN 2
+			WHEN task.paused THEN 3
+			WHEN task.status = 'done' THEN 4
+			WHEN task.status = 'failed' THEN 5
+			WHEN task.status = 'timeout' THEN 6
+			ELSE 99 END`
+	case "duration":
+		order = `CASE
+			WHEN task.status = 'running' THEN EXTRACT(EPOCH FROM now() - task.created_at)
+			WHEN task.completed_at IS NOT NULL THEN EXTRACT(EPOCH FROM task.completed_at - task.created_at)
+			WHEN activity.last_activity IS NOT NULL THEN activity.last_activity - EXTRACT(EPOCH FROM task.created_at)::bigint
+			ELSE 0 END`
+	}
+	if q.Direction == "asc" {
+		order += " ASC"
+	} else {
+		order += " DESC"
+	}
+	order = "(task.pinned_at IS NOT NULL) DESC, task.pinned_at DESC NULLS LAST, " + order + ", task.id DESC"
+	args = append(args, q.Size, (q.Page-1)*q.Size)
+	limitN := len(args) - 1
+	rows, err := d.Query(`SELECT task.id `+from+`
+LEFT JOIN LATERAL (
+	SELECT EXTRACT(EPOCH FROM max(created_at))::bigint AS last_activity
+	FROM activity WHERE exploration_id=task.exploration_id
+) activity ON true
+WHERE `+clause+` ORDER BY `+order+fmt.Sprintf(" LIMIT $%d OFFSET $%d", limitN, limitN+1), args...)
+	if err != nil {
+		return TaskListPage{}, err
+	}
+	defer rows.Close()
+	ids := make([]int64, 0, q.Size)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return TaskListPage{}, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return TaskListPage{}, err
+	}
+	return TaskListPage{IDs: ids, Total: total, AllTotal: allTotal}, nil
+}

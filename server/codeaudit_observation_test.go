@@ -64,7 +64,7 @@ func importObservationTestCell(t *testing.T, pg *pgdb.DB, taskID int64, key, met
 
 func TestRecordObservationOutOfScopeIsDeferred(t *testing.T) {
 	s, task, pg, taskID := newObservationTestEnv(t)
-	importObservationTestCell(t, pg, taskID, "/api/obs/search:authz", "GET", "/api/obs/search", "authz", "delta", "clean")
+	importObservationTestCell(t, pg, taskID, "GET /api/obs/search:authz", "GET", "/api/obs/search", "authz", "delta", "clean")
 
 	result, err := s.recordWorkerObservation(task, agent.ObservationSpec{
 		Method: "GET", URL: "/api/obs/export", VulnClass: "hardcoded-credentials",
@@ -76,7 +76,7 @@ func TestRecordObservationOutOfScopeIsDeferred(t *testing.T) {
 	if !result.Deferred {
 		t.Fatalf("out-of-scope observation must be deferred, got %#v", result)
 	}
-	if c, err := pg.Cells().Get(taskID, "/api/obs/export:hardcoded-credentials"); err != nil {
+	if c, err := pg.Cells().Get(taskID, "GET /api/obs/export:hardcoded-credentials"); err != nil {
 		t.Fatal(err)
 	} else if c != nil {
 		t.Fatalf("out-of-scope observation created a matrix cell: %#v", c)
@@ -92,7 +92,7 @@ func TestRecordObservationOutOfScopeIsDeferred(t *testing.T) {
 
 func TestRecordObservationInScopeCreatesSingleIntent(t *testing.T) {
 	s, task, pg, taskID := newObservationTestEnv(t)
-	importObservationTestCell(t, pg, taskID, "/api/obs/search:authz", "GET", "/api/obs/search", "authz", "delta", "clean")
+	importObservationTestCell(t, pg, taskID, "GET /api/obs/search:authz", "GET", "/api/obs/search", "authz", "delta", "clean")
 
 	result, err := s.recordWorkerObservation(task, agent.ObservationSpec{
 		Method: "GET", URL: "/api/obs/search", VulnClass: "hardcoded-credentials",
@@ -104,7 +104,7 @@ func TestRecordObservationInScopeCreatesSingleIntent(t *testing.T) {
 	if result.Deferred {
 		t.Fatalf("in-scope observation must not be deferred: %#v", result)
 	}
-	key := "/api/obs/search:hardcoded-credentials"
+	key := "GET /api/obs/search:hardcoded-credentials"
 	c, err := pg.Cells().Get(taskID, key)
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestRecordObservationInScopeCreatesSingleIntent(t *testing.T) {
 
 func TestSeedCellIntentsConcurrentClaimsOnlyOnce(t *testing.T) {
 	s, task, pg, taskID := newObservationTestEnv(t)
-	importObservationTestCell(t, pg, taskID, "/api/obs/concurrent:authz", "GET", "/api/obs/concurrent", "authz", "delta", "pending")
+	importObservationTestCell(t, pg, taskID, "GET /api/obs/concurrent:authz", "GET", "/api/obs/concurrent", "authz", "delta", "pending")
 
 	const workers = 8
 	var wg sync.WaitGroup
@@ -170,7 +170,7 @@ func TestSeedCellIntentsConcurrentClaimsOnlyOnce(t *testing.T) {
 	if intents != 1 {
 		t.Fatalf("intent count = %d, want exactly 1", intents)
 	}
-	c, err := pg.Cells().Get(taskID, "/api/obs/concurrent:authz")
+	c, err := pg.Cells().Get(taskID, "GET /api/obs/concurrent:authz")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestCellDisplayNameSupportsObservationTypes(t *testing.T) {
 
 func TestObservationAndEngineSeedRaceCreatesOneIntent(t *testing.T) {
 	s, task, pg, taskID := newObservationTestEnv(t)
-	importObservationTestCell(t, pg, taskID, "/api/obs/race:authz", "GET", "/api/obs/race", "authz", "delta", "clean")
+	importObservationTestCell(t, pg, taskID, "GET /api/obs/race:authz", "GET", "/api/obs/race", "authz", "delta", "clean")
 
 	start := make(chan struct{})
 	var wg sync.WaitGroup
@@ -238,18 +238,18 @@ func TestNewApplicableCellKeys(t *testing.T) {
 		return c
 	}
 	body := importCellsBody{Tasks: []pgdb.CellInput{
-		mk("/api/new:authz", "authz", "applicable"),                   // new applicable
+		mk("GET /api/new:authz", "authz", "applicable"),               // new applicable
 		mk("/api/new:xss", "xss", "not_applicable"),                   // new but N/A
-		mk("/api/base:authz", "authz", "applicable"),                  // inherited key
+		mk("GET /api/base:authz", "authz", "applicable"),              // inherited key
 		mk("/api/delta:sql-injection", "sql-injection", "applicable"), // delta
 		mk("repo://secrets:secrets", "secrets", "applicable"),         // repo-level new applicable
 	}}
 	base := map[string]pgdb.Cell{
-		"/api/base:authz": {CellKey: "/api/base:authz"},
+		"GET /api/base:authz": {CellKey: "GET /api/base:authz"},
 	}
 	got := newApplicableCellKeys(body, base, []string{"/api/delta:sql-injection"})
 	want := map[string]bool{
-		"/api/new:authz":         true,
+		"GET /api/new:authz":     true,
 		"repo://secrets:secrets": true,
 	}
 	if len(got) != len(want) {

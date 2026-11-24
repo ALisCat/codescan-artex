@@ -534,21 +534,28 @@ function DetailInner() {
   const preparedRun = audits[0]?.status === "prepared" ? audits[0] : null;
   const affectedEndpoints = new Set<string>(preparedRun?.delta_gaps ?? []);
   const autoRiskEndpoints = new Set<string>();
-  const autoRiskByEndpoint = new Map<string, { cellKey: string; vulnclass: string }[]>();
+  const autoRiskByEndpoint = new Map<
+    string,
+    { label: string; method: string; url: string; cells: { cellKey: string; vulnclass: string }[] }
+  >();
   for (const key of preparedRun?.delta_cell_keys ?? []) {
     const i = key.lastIndexOf(":");
     if (i > 0) {
-      const url = key.slice(0, i);
+      const endpointPart = key.slice(0, i);
+      const methodMatch = endpointPart.match(/^([A-Z]+)\s+(.*)$/);
+      const method = methodMatch?.[1] ?? "";
+      const url = methodMatch?.[2] ?? endpointPart;
+      const label = method ? `${method} ${url}` : url;
       const vuln = key.slice(i + 1);
-      affectedEndpoints.add(url);
-      autoRiskEndpoints.add(url);
-      const types = autoRiskByEndpoint.get(url) ?? [];
-      if (!types.some((item) => item.cellKey === key)) types.push({ cellKey: key, vulnclass: vuln });
-      autoRiskByEndpoint.set(url, types);
+      affectedEndpoints.add(label);
+      autoRiskEndpoints.add(label);
+      const row = autoRiskByEndpoint.get(label) ?? { label, method, url, cells: [] };
+      if (!row.cells.some((item) => item.cellKey === key)) row.cells.push({ cellKey: key, vulnclass: vuln });
+      autoRiskByEndpoint.set(label, row);
     }
   }
-  const autoRiskRows = [...autoRiskByEndpoint.entries()]
-    .map(([url, cells]) => ({ url, cells: cells.filter((cell) => !rejectedRiskKeys.has(cell.cellKey)) }))
+  const autoRiskRows = [...autoRiskByEndpoint.values()]
+    .map((row) => ({ ...row, cells: row.cells.filter((cell) => !rejectedRiskKeys.has(cell.cellKey)) }))
     .filter((row) => row.cells.length > 0);
   const newApplicableByEndpoint = new Map<string, IncrementalGapCell[]>();
   for (const cell of newApplicableCells) {
@@ -1007,8 +1014,9 @@ function DetailInner() {
                       </thead>
                       <tbody>
                         {autoRiskRows.map((row) => (
-                          <tr key={row.url} className="border-b last:border-b-0">
-                            <td className="max-w-64 truncate px-3 py-1.5 font-mono" title={row.url}>
+                          <tr key={row.label} className="border-b last:border-b-0">
+                            <td className="max-w-64 truncate px-3 py-1.5 font-mono" title={row.label}>
+                              {row.method ? <span className="mr-1 font-sans text-muted-foreground">{row.method}</span> : null}
                               {row.url}
                             </td>
                             <td className="px-3 py-1.5">

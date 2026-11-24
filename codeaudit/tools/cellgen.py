@@ -1044,7 +1044,7 @@ def build_task(ep, vuln, c, perm, hits, var, flags, csig, aid, p, low):
     c=dict(c); c["sinks"]=uniq
     direction = f"审计 {ep['http']} {ep['url']} 的「{VULN_CN[vuln]}」风险"
     t = {
-      "task_id": f"{aid or ep['url']}:{vuln}",
+      "task_id": f"{ep['http']} {aid or ep['url']}:{vuln}",
       "asset_ids": [aid] if aid else [],
       "direction": direction,
       "vulnclass": vuln,
