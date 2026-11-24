@@ -57,6 +57,7 @@ import type { Department, LLMProfile, Task, TaskProjectAudit } from "@/lib/types
 
 import { AssetsTab } from "./_tabs/assets-tab";
 import { BroadcastTab } from "./_tabs/broadcast-tab";
+import { ChainRiskTab } from "./_tabs/chain-risk-tab";
 import { CoverageGraphTab } from "./_tabs/coverage-graph-tab";
 import { DepsTab } from "./_tabs/deps-tab";
 import { FindingsTab } from "./_tabs/findings-tab";
@@ -80,6 +81,7 @@ const TABS = [
   { value: "broadcast", label: "播报板" },
   { value: "findings", label: "发现" },
   { value: "matrix", label: "矩阵" },
+  { value: "chains", label: "链式风险" },
   { value: "retests", label: "复核" },
   { value: "assets", label: "测试资产" },
   { value: "deps", label: "依赖" },
@@ -733,6 +735,9 @@ function TaskDetailInner() {
         </TabsContent>
         <TabsContent value="matrix" className="mt-0">
           <MatrixTab taskId={id} />
+        </TabsContent>
+        <TabsContent value="chains" className="mt-0">
+          <ChainRiskTab taskId={id} />
         </TabsContent>
         <TabsContent value="findings" className="mt-0">
           <FindingsTab taskId={id} canWrite={canWrite} />

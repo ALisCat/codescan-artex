@@ -559,6 +559,11 @@ export const api = {
     }>(`/tasks/${id}/coverage`),
   // 资产覆盖图：范围内全部资产 + 连接用的根域名/公司节点，含 tested/in_scope。
   taskCoverageGraph: (id: string) => get<CoverageGraphData>(`/tasks/${id}/coverage-graph`),
+  // 链式风险/延后观察：从 worker facts 中筛出跨接口、跨格子的组合风险。
+  chainObservations: (id: string) =>
+    get<{ observations: TaskNode[] | null }>(`/tasks/${id}/chain-observations`).then((r) =>
+      arr(r.observations),
+    ),
 
   // ---- 第三方依赖（Java jar / .m2）----
   // 清单：坐标/类数/大小/源码状态 + 当前反编译能力。后端只读库，不触发反编译。
