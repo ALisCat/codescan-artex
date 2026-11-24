@@ -35,6 +35,38 @@ type manualCellSpec struct {
 	Method    string `json:"method"`
 	URL       string `json:"url"`
 	VulnClass string `json:"vulnclass"`
+	FilePath  string `json:"file_path,omitempty"`
+}
+
+// manualCellHints 把人工补充的源码文件路径转成 worker 能直接看到的 flow 起点。
+// 文件路径不是审计结论，只是定位入口；缺省时 worker 仍可按 URL 搜索。
+func manualNewCellHints(hints json.RawMessage, filePath string) json.RawMessage {
+	filePath = strings.TrimSpace(filePath)
+	if filePath == "" {
+		if len(hints) == 0 || string(hints) == "null" {
+			return json.RawMessage(`{}`)
+		}
+		return hints
+	}
+	var value map[string]any
+	if len(hints) > 0 && string(hints) != "null" {
+		_ = json.Unmarshal(hints, &value)
+	}
+	if value == nil {
+		value = map[string]any{}
+	}
+	flow, _ := value["flow"].([]any)
+	flow = append(flow, map[string]any{
+		"name": "manual entry",
+		"file": filePath,
+		"line": "",
+	})
+	value["flow"] = flow
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return hints
+	}
+	return raw
 }
 
 func (s *Server) findBaseAuditTask(p *db.CodeProject) (*db.Task, *db.ProjectAuditRun, error) {
@@ -715,6 +747,7 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 	var req struct {
 		AutoStart             *bool            `json:"auto_start"`
 		ManualCells           []manualCellSpec `json:"manual_cells"`
+		ManualNewCells        []manualCellSpec `json:"manual_new_cells"`
 		ManualCellKeys        []string         `json:"manual_cell_keys"`
 		ExcludedCellKeys      []string         `json:"excluded_cell_keys"`
 		NewApplicableCellKeys []string         `json:"new_applicable_cell_keys"`
@@ -759,6 +792,36 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 			}
 		}
 	}
+	// 新增适用格里人工补充的接口：不要求出现在 gap/目标矩阵里，允许直接
+	// 合成新格；文件路径可选，填了会作为 flow 起点交给 worker。
+	manualNewSpecs := make([]manualCellSpec, 0, len(req.ManualNewCells))
+	manualNewKeys := make(map[string]bool, len(req.ManualNewCells))
+	for _, spec := range req.ManualNewCells {
+		method := strings.ToUpper(strings.TrimSpace(spec.Method))
+		url := strings.TrimSpace(spec.URL)
+		vuln := strings.TrimSpace(spec.VulnClass)
+		filePath := strings.TrimSpace(spec.FilePath)
+		if method == "" || url == "" || vuln == "" || len([]rune(vuln)) > 80 {
+			writeErr(w, 400, "人工新增接口参数不合法")
+			return
+		}
+		if !strings.HasPrefix(url, "/") {
+			writeErr(w, 400, "人工新增接口路径需要以 / 开头")
+			return
+		}
+		cellKey := url + ":" + vuln
+		if manualNewKeys[cellKey] {
+			continue
+		}
+		manualNewKeys[cellKey] = true
+		manualNewSpecs = append(manualNewSpecs, manualCellSpec{
+			Method: method, URL: url, VulnClass: vuln, FilePath: filePath,
+		})
+	}
+	if len(manualNewSpecs) > 100 {
+		writeErr(w, 400, "一次最多人工新增 100 个接口格")
+		return
+	}
 	excluded := make(map[string]bool, len(req.ExcludedCellKeys))
 	for _, key := range req.ExcludedCellKeys {
 		if key = strings.TrimSpace(key); key != "" {
@@ -789,7 +852,7 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		}
 		newSelected[key] = true
 	}
-	if len(deltaAllowed) == 0 && len(manualByEndpoint) == 0 && len(newSelected) == 0 {
+	if len(deltaAllowed) == 0 && len(manualByEndpoint) == 0 && len(manualNewSpecs) == 0 && len(newSelected) == 0 {
 		writeErr(w, 409, "本次没有可审计的矩阵格，请保留自动类型、选择人工审计类型或勾选新增适用格")
 		return
 	}
@@ -801,7 +864,7 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 		}
 	}
 	body := fullBody
-	body.Tasks = make([]db.CellInput, 0, len(deltaAllowed)+len(manualByEndpoint)+len(newSelected))
+	body.Tasks = make([]db.CellInput, 0, len(deltaAllowed)+len(manualByEndpoint)+len(manualNewSpecs)+len(newSelected))
 	imported := make(map[string]bool)
 	manualFound := make(map[string]bool)
 	for _, cell := range fullBody.Tasks {
@@ -856,6 +919,41 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 			cell.Trace = tpl.Trace
 			cell.Priority = tpl.Priority
 			cell.Bucket = tpl.Bucket
+		}
+		body.Tasks = append(body.Tasks, cell)
+		imported[cellKey] = true
+	}
+	for _, spec := range manualNewSpecs {
+		cellKey := spec.URL + ":" + spec.VulnClass
+		if imported[cellKey] {
+			continue
+		}
+		label := spec.Method + " " + spec.URL
+		cell := db.CellInput{
+			CellKey:     cellKey,
+			VulnClass:   spec.VulnClass,
+			Eligibility: "applicable",
+			Priority:    14,
+			Bucket:      "P1",
+			Checklist:   append([]string(nil), manualGenericChecklist...),
+			Hints:       manualNewCellHints(nil, spec.FilePath),
+			HintsNote:   "人工添加接口：分析器未覆盖；文件路径为人工提供，请先核对该入口。",
+			Reason:      "人工添加接口（分析器未覆盖）",
+			Trace:       json.RawMessage(`[]`),
+			Direction:   fmt.Sprintf("人工添加：审计 %s %s 的「%s」风险", spec.Method, spec.URL, cellDisplayName(spec.VulnClass)),
+		}
+		cell.Endpoint.Method = spec.Method
+		cell.Endpoint.URL = spec.URL
+		if tpl, ok := templates[label]; ok {
+			cell.Checklist = tpl.Checklist
+			cell.Hints = manualNewCellHints(tpl.Hints, spec.FilePath)
+			cell.HintsNote = tpl.HintsNote
+			cell.Trace = tpl.Trace
+			cell.Priority = tpl.Priority
+			cell.Bucket = tpl.Bucket
+		}
+		if spec.FilePath != "" {
+			cell.HintsNote = strings.TrimSpace(cell.HintsNote + " 人工文件：" + spec.FilePath)
 		}
 		body.Tasks = append(body.Tasks, cell)
 		imported[cellKey] = true
@@ -934,7 +1032,8 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 				selected.Eligibility = "applicable"
 				selected.Hold = false
 				selected.Reason = "人工确认新增适用格"
-			} else if manualByEndpoint[label] != "" && strings.EqualFold(strings.TrimSpace(target.VulnClass), manualByEndpoint[label]) {
+			} else if manualNewKeys[target.CellKey] ||
+				(manualByEndpoint[label] != "" && strings.EqualFold(strings.TrimSpace(target.VulnClass), manualByEndpoint[label])) {
 				origin = "manual"
 				selected.Eligibility = "applicable"
 				selected.Hold = false
@@ -996,10 +1095,18 @@ func (s *Server) startPreparedIncrementalAudit(w http.ResponseWriter, r *http.Re
 			removedCount++
 		}
 	}
-	manualList := make([]string, 0, len(manualByEndpoint))
+	manualList := make([]string, 0, len(manualByEndpoint)+len(manualNewSpecs))
 	for label, vuln := range manualByEndpoint {
 		manualList = append(manualList, label+" -> "+vuln)
 	}
+	for _, spec := range manualNewSpecs {
+		item := spec.Method + " " + spec.URL + " -> " + spec.VulnClass
+		if spec.FilePath != "" {
+			item += " @" + spec.FilePath
+		}
+		manualList = append(manualList, item)
+	}
+	sort.Strings(manualList)
 	confirmedNewList := make([]string, 0, len(newSelected))
 	for key := range newSelected {
 		confirmedNewList = append(confirmedNewList, key)

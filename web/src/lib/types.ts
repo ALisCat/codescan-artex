@@ -1192,6 +1192,7 @@ export interface ManualCellSpec {
   method: string;
   url: string;
   vulnclass: string;
+  file_path?: string;
 }
 
 export interface IncrementalGapCell {

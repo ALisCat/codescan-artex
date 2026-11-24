@@ -159,6 +159,30 @@ const VULN_LABELS: Record<string, string> = {
   "sensitive_data": "敏感数据",
 };
 
+const MANUAL_VULN_OPTIONS = [
+  "authz",
+  "authn",
+  "sql-injection",
+  "command-exec",
+  "ssrf",
+  "deserialization",
+  "file-upload",
+  "path-traversal",
+  "xss",
+  "business_logic",
+  "xxe",
+  "csrf",
+  "open_redirect",
+  "ssti",
+  "ldap_injection",
+  "mass_assignment",
+  "race_condition",
+  "secrets",
+  "crypto",
+  "dependency",
+  "sensitive_data",
+] as const;
+
 function vulnLabel(v: string) {
   return VULN_LABELS[v] ?? v;
 }
@@ -243,6 +267,11 @@ function DetailInner() {
   const [rejectedRiskKeys, setRejectedRiskKeys] = React.useState<Set<string>>(new Set());
   const [newApplicableCells, setNewApplicableCells] = React.useState<IncrementalGapCell[]>([]);
   const [selectedNewKeys, setSelectedNewKeys] = React.useState<Set<string>>(new Set());
+  const [manualNewCells, setManualNewCells] = React.useState<ManualCellSpec[]>([]);
+  const [manualMethod, setManualMethod] = React.useState("GET");
+  const [manualPath, setManualPath] = React.useState("");
+  const [manualVuln, setManualVuln] = React.useState<string>("authz");
+  const [manualFile, setManualFile] = React.useState("");
   const [detailsOpen, setDetailsOpen] = React.useState(false);
   const [runsOpen, setRunsOpen] = React.useState(false);
   const [accessOpen, setAccessOpen] = React.useState(false);
@@ -435,6 +464,7 @@ function DetailInner() {
         manualCells,
         [...rejectedRiskKeys],
         [...selectedNewKeys],
+        manualNewCells,
       );
       setAudits((prev) => [res.audit, ...prev.filter((r) => r.id !== res.audit.id)]);
       toast.success("增量审计任务已创建");
@@ -533,7 +563,39 @@ function DetailInner() {
     url: cells[0]?.url ?? "",
     cells,
   }));
-  const manualSelected = Object.values(manualSelections).some((value) => value.trim() !== "");
+
+  const addManualNewCell = React.useCallback(() => {
+    const method = manualMethod.trim().toUpperCase();
+    const url = manualPath.trim();
+    const vulnclass = manualVuln.trim();
+    if (!url || !vulnclass) {
+      toast.error("请填写接口路径并选择漏洞类型");
+      return;
+    }
+    if (!url.startsWith("/")) {
+      toast.error("接口路径需要以 / 开头");
+      return;
+    }
+    if (manualNewCells.some((cell) => cell.method === method && cell.url === url && cell.vulnclass === vulnclass)) {
+      toast.error("这个接口和漏洞类型已经添加");
+      return;
+    }
+    setManualNewCells((prev) => [
+      ...prev,
+      { method, url, vulnclass, file_path: manualFile.trim() || undefined },
+    ]);
+    setManualPath("");
+    setManualFile("");
+  }, [manualFile, manualMethod, manualNewCells, manualPath, manualVuln]);
+
+  const removeManualNewCell = React.useCallback((method: string, url: string, vulnclass: string) => {
+    setManualNewCells((prev) =>
+      prev.filter((cell) => !(cell.method === method && cell.url === url && cell.vulnclass === vulnclass)),
+    );
+  }, []);
+
+  const manualSelected =
+    Object.values(manualSelections).some((value) => value.trim() !== "") || manualNewCells.length > 0;
   const remainingDeltaKeys = (preparedRun?.delta_cell_keys ?? []).filter((key) => !rejectedRiskKeys.has(key));
   const canStartIncremental =
     !!preparedRun &&
@@ -1037,6 +1099,7 @@ function DetailInner() {
                       新增适用格 · 人工确认
                       <span className="text-muted-foreground ml-2 font-normal">
                         已选 {selectedNewKeys.size} / {newApplicableCells.length}
+                        {manualNewCells.length > 0 ? ` · 人工新增 ${manualNewCells.length}` : ""}
                       </span>
                     </div>
                     <div className="flex gap-1">
@@ -1062,6 +1125,85 @@ function DetailInner() {
                   </div>
                   <div className="text-muted-foreground border-b border-border/60 px-3 py-1.5 text-[11px]">
                     分析器认为可能适用，但没有命中本次变更行。默认不审计；勾选后纳入本次审计。
+                    分析器没覆盖的接口也可以在这里人工添加。
+                  </div>
+                  <div className="space-y-2 border-b border-border/60 bg-muted/20 p-2">
+                    <div className="text-[11px] font-medium">人工添加接口</div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <select
+                        value={manualMethod}
+                        onChange={(e) => setManualMethod(e.target.value)}
+                        className="h-7 w-20 rounded border bg-background px-1.5 text-xs"
+                        aria-label="人工添加接口的 HTTP 方法"
+                      >
+                        {["GET", "POST", "PUT", "PATCH", "DELETE"].map((method) => (
+                          <option key={method} value={method}>
+                            {method}
+                          </option>
+                        ))}
+                      </select>
+                      <Input
+                        value={manualPath}
+                        onChange={(e) => setManualPath(e.target.value)}
+                        placeholder="接口路径，例如 /api/admin/export"
+                        className="h-7 min-w-48 flex-1 font-mono text-xs"
+                        aria-label="人工添加的接口路径"
+                      />
+                      <select
+                        value={manualVuln}
+                        onChange={(e) => setManualVuln(e.target.value)}
+                        className="h-7 w-32 rounded border bg-background px-1.5 text-xs"
+                        aria-label="人工添加的漏洞类型"
+                      >
+                        {MANUAL_VULN_OPTIONS.map((key) => (
+                          <option key={key} value={key}>
+                            {vulnLabel(key)}
+                          </option>
+                        ))}
+                      </select>
+                      <Input
+                        value={manualFile}
+                        onChange={(e) => setManualFile(e.target.value)}
+                        placeholder="文件路径（可选）"
+                        className="h-7 min-w-48 flex-1 font-mono text-xs"
+                        aria-label="人工添加接口所在文件路径"
+                      />
+                      <Button type="button" size="sm" onClick={addManualNewCell}>
+                        添加
+                      </Button>
+                    </div>
+                    <div className="text-muted-foreground text-[10px]">
+                      分析器未覆盖的接口建议填写文件路径；不填时 worker 会按接口路径搜索。
+                    </div>
+                    {manualNewCells.length > 0 && (
+                      <div className="flex flex-col gap-1">
+                        {manualNewCells.map((cell) => (
+                          <div
+                            key={`${cell.method} ${cell.url} ${cell.vulnclass}`}
+                            className="flex flex-wrap items-center gap-1.5 rounded border bg-background/60 px-2 py-1 text-[11px]"
+                          >
+                            <Badge variant="outline" className="font-mono text-[9px]">
+                              {cell.method}
+                            </Badge>
+                            <code className="min-w-0 break-all">{cell.url}</code>
+                            <Badge variant="outline">{vulnLabel(cell.vulnclass)}</Badge>
+                            {cell.file_path && (
+                              <code className="text-muted-foreground min-w-0 break-all text-[10px]">
+                                {cell.file_path}
+                              </code>
+                            )}
+                            <button
+                              type="button"
+                              className="text-muted-foreground hover:text-destructive ml-auto rounded px-1"
+                              onClick={() => removeManualNewCell(cell.method, cell.url, cell.vulnclass)}
+                              aria-label={`移除人工添加的 ${cell.method} ${cell.url}`}
+                            >
+                              移除
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className="space-y-1.5 p-2">
                     {newApplicableRows.length === 0 ? (
