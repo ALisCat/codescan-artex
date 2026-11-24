@@ -57,7 +57,23 @@ function AuthedLayout({ children }: Readonly<{ children: ReactNode }>) {
     }
   }, []);
 
-  const defaultOpen = typeof document === "undefined" ? true : getClientCookie("sidebar_state") !== "false";
+  // 侧边栏展开状态优先读 localStorage，cookie 只作为隐私模式下的兜底。
+  // 这样即使旧版本留下 sidebar_state=false，也会默认先展开，避免用户每次
+  // 进入页面都要重新点一次；用户主动收起后仍会长期记住。
+  const defaultOpen = (() => {
+    if (typeof document === "undefined") return true;
+    let storageAvailable = false;
+    try {
+      storageAvailable = true;
+      const stored = window.localStorage.getItem("sidebar_state");
+      if (stored !== null) return stored !== "false";
+    } catch {
+      // 隐私模式禁止 localStorage 时退回 cookie。
+    }
+    // localStorage 可用但没有记录：默认展开，不继承旧版遗留的 cookie=false。
+    if (storageAvailable) return true;
+    return getClientCookie("sidebar_state") !== "false";
+  })();
   const variant = readPref<SidebarVariant>(
     "sidebar_variant",
     SIDEBAR_VARIANT_VALUES,

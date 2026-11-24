@@ -25,7 +25,8 @@ import {
 import { PanelLeftIcon } from "lucide-react"
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state"
-const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
+const SIDEBAR_MOBILE_STATE_KEY = "sidebar_mobile_state"
+const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 365
 const SIDEBAR_WIDTH = "16rem"
 const SIDEBAR_WIDTH_MOBILE = "18rem"
 const SIDEBAR_WIDTH_ICON = "3rem"
@@ -66,7 +67,28 @@ function SidebarProvider({
   onOpenChange?: (open: boolean) => void
 }) {
   const isMobile = useIsMobile()
-  const [openMobile, setOpenMobile] = React.useState(false)
+  const [openMobile, setOpenMobileState] = React.useState(() => {
+    if (typeof window === "undefined") return false
+    try {
+      return window.localStorage.getItem(SIDEBAR_MOBILE_STATE_KEY) === "true"
+    } catch {
+      return false
+    }
+  })
+  const setOpenMobile = React.useCallback(
+    (value: boolean | ((value: boolean) => boolean)) => {
+      setOpenMobileState((prev) => {
+        const next = typeof value === "function" ? value(prev) : value
+        try {
+          window.localStorage.setItem(SIDEBAR_MOBILE_STATE_KEY, String(next))
+        } catch {
+          // localStorage 不可用时只保留当前会话状态。
+        }
+        return next
+      })
+    },
+    []
+  )
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
@@ -81,8 +103,13 @@ function SidebarProvider({
         _setOpen(openState)
       }
 
-      // This sets the cookie to keep the sidebar state.
-      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`
+      // Cookie 供下次启动/隐私模式兜底；localStorage 让展开状态长期保留。
+      try {
+        window.localStorage.setItem(SIDEBAR_COOKIE_NAME, String(openState))
+      } catch {
+        // localStorage 不可用时只靠 cookie。
+      }
+      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}; SameSite=Lax`
     },
     [setOpenProp, open]
   )
