@@ -260,6 +260,7 @@ function DetailInner() {
   const [loading, setLoading] = React.useState(true);
   const [checking, setChecking] = React.useState(false);
   const [starting, setStarting] = React.useState(false);
+  const [cancellingAudit, setCancellingAudit] = React.useState(false);
   const [preparingIncremental, setPreparingIncremental] = React.useState(false);
   const [startingIncremental, setStartingIncremental] = React.useState(false);
   const [gapCells, setGapCells] = React.useState<IncrementalGapCell[]>([]);
@@ -351,6 +352,25 @@ function DetailInner() {
       toast.error("发起全量审计失败：" + (e as Error).message);
     } finally {
       setStarting(false);
+    }
+  }
+
+  async function cancelFullAudit() {
+    if (!p || !activeFullAudit || cancellingAudit) return;
+    setCancellingAudit(true);
+    try {
+      const run = await api.cancelProjectAudit(p.id, activeFullAudit.id);
+      setAudits((prev) => [run, ...prev.filter((item) => item.id !== run.id)]);
+      if (pollRef.current) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      toast.success("审计运行已取消，执行任务已暂停");
+      load();
+    } catch (e) {
+      toast.error("取消审计运行失败：" + (e as Error).message);
+    } finally {
+      setCancellingAudit(false);
     }
   }
 
@@ -820,7 +840,20 @@ function DetailInner() {
               </div>
             </div>
           </div>
-          <div className="text-muted-foreground shrink-0 font-mono text-[11px]">target {shortCommit(activeFullAudit.target_commit)}</div>
+          <div className="flex shrink-0 items-center gap-2">
+            <div className="text-muted-foreground font-mono text-[11px]">target {shortCommit(activeFullAudit.target_commit)}</div>
+            {activeFullAudit.status !== "fetching" && activeFullAudit.status !== "preparing" && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void cancelFullAudit()}
+                disabled={cancellingAudit}
+              >
+                {cancellingAudit && <Loader2Icon className="size-3.5 animate-spin" />}
+                结束审计
+              </Button>
+            )}
+          </div>
         </div>
       )}
 

@@ -155,6 +155,56 @@ func (s *Server) startProjectAudit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// cancelProjectAudit pauses the executing task (when present) and releases the
+// project audit lock. Source fetch / matrix preparation runs before a task
+// exists, so those stages are not cancellable here yet.
+func (s *Server) cancelProjectAudit(w http.ResponseWriter, r *http.Request) {
+	projectID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || projectID <= 0 {
+		writeErr(w, http.StatusBadRequest, "项目 ID 不合法")
+		return
+	}
+	runID, err := strconv.ParseInt(r.PathValue("runID"), 10, 64)
+	if err != nil || runID <= 0 {
+		writeErr(w, http.StatusBadRequest, "审计运行 ID 不合法")
+		return
+	}
+	run, err := s.m.pg.CodeProjects().GetAudit(runID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if run == nil || run.ProjectID != projectID {
+		writeErr(w, http.StatusNotFound, "审计运行不存在")
+		return
+	}
+	if !auditRunActive(run.Status) {
+		writeErr(w, http.StatusConflict, "该审计运行已经结束")
+		return
+	}
+	if run.Status == "fetching" || run.Status == "preparing" {
+		writeErr(w, http.StatusConflict, "源码下载或矩阵准备阶段暂不能取消，请等待任务创建后再结束审计")
+		return
+	}
+	if run.TaskID != nil {
+		if t, ok := s.m.Task(strconv.FormatInt(*run.TaskID, 10)); ok {
+			life := t.lifecycleSnapshot()
+			if !life.Paused && !isTerminalStatus(life.Status) {
+				if _, err := s.applyTaskControl(t, "pause"); err != nil {
+					writeErr(w, http.StatusConflict, "暂停执行任务失败："+err.Error())
+					return
+				}
+			}
+		}
+	}
+	if err := s.m.pg.CodeProjects().FinishAudit(run.ID, run.TaskID, "cancelled", "用户取消审计运行"); err != nil {
+		writeErr(w, http.StatusInternalServerError, "取消审计运行失败："+err.Error())
+		return
+	}
+	updated, _ := s.m.pg.CodeProjects().GetAudit(run.ID)
+	writeJSON(w, http.StatusOK, updated)
+}
+
 func (s *Server) runProjectFullAudit(run *db.ProjectAuditRun, p *db.CodeProject, me *db.User, c *gitlabsrc.Client, uploadID, zipPath, sourceDir, target string, autoStart bool) {
 	var task *Task
 	fail := func(msg string) {

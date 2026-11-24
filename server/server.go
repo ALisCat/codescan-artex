@@ -908,6 +908,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/projects/{id}/access-profile", s.requireAdmin(s.getProjectAccessProfile))
 	mux.HandleFunc("PUT /api/projects/{id}/access-profile", s.requireAdmin(s.putProjectAccessProfile))
 	mux.HandleFunc("GET /api/projects/{id}/audits/{runID}", s.getProjectAudit)
+	mux.HandleFunc("POST /api/projects/{id}/audits/{runID}/cancel", s.requireAdmin(s.cancelProjectAudit))
 	// 漏洞 IM 推送。渠道是「多实例 + 各自过滤规则」的资源，因此独立成一组
 	// REST 接口，而不是塞进扁平的 /api/settings 键值里。
 	mux.HandleFunc("GET /api/notify/meta", s.notifyMeta)

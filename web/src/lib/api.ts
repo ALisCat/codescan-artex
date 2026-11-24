@@ -1233,6 +1233,8 @@ export const api = {
   projectAudits: (id: number) =>
     get<{ audits: ProjectAuditRun[] | null }>(`/projects/${id}/audits`).then((r) => arr(r.audits)),
   projectAudit: (id: number, runID: number) => get<ProjectAuditRun>(`/projects/${id}/audits/${runID}`),
+  cancelProjectAudit: (id: number, runID: number) =>
+    post<ProjectAuditRun>(`/projects/${id}/audits/${runID}/cancel`, {}),
   taskProjectAudit: (id: string) => get<TaskProjectAudit>(`/tasks/${id}/project-audit`),
   projectChangePreview: (id: number) => get<ChangePreview>(`/projects/${id}/change-preview`),
   reviewProject: (id: number, commit: string, note: string) =>
