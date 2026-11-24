@@ -83,6 +83,7 @@ import type {
   ChangePreview,
   ProjectAuditRun,
   ScanEstimate,
+  ScanProfile,
   TaskProjectAudit,
   IncrementalGapCell,
   ManualCellSpec,
@@ -1210,8 +1211,8 @@ export const api = {
     get<{ access_profile: ProjectAccessProfile }>(`/projects/${id}/access-profile`).then((r) => r.access_profile),
   updateProjectAccessProfile: (id: number, profile: ProjectAccessProfile) =>
     put<{ access_profile: ProjectAccessProfile }>(`/projects/${id}/access-profile`, profile).then((r) => r.access_profile),
-  startProjectAudit: (id: number, mode: "full" | "incremental" = "full") =>
-    post<{ audit: ProjectAuditRun; upload_id: string; state: string }>(`/projects/${id}/audit`, { mode }),
+  startProjectAudit: (id: number, mode: "full" | "incremental" = "full", scanProfile: ScanProfile = "standard") =>
+    post<{ audit: ProjectAuditRun; upload_id: string; state: string }>(`/projects/${id}/audit`, { mode, scan_profile: scanProfile }),
   prepareIncrementalAudit: (id: number) => post<ProjectAuditRun>(`/projects/${id}/incremental-prepare`),
   startIncrementalAudit: (
     id: number,
@@ -1233,7 +1234,8 @@ export const api = {
     get<{ cells: IncrementalGapCell[] }>(`/projects/${id}/incremental-runs/${runID}/new-applicable-cells`),
   projectAudits: (id: number) =>
     get<{ audits: ProjectAuditRun[] | null }>(`/projects/${id}/audits`).then((r) => arr(r.audits)),
-  projectScanEstimate: (id: number) => get<ScanEstimate>(`/projects/${id}/scan-estimate`),
+  projectScanEstimate: (id: number, profile: ScanProfile = "standard") =>
+    get<ScanEstimate>(`/projects/${id}/scan-estimate?profile=${encodeURIComponent(profile)}`),
   projectAudit: (id: number, runID: number) => get<ProjectAuditRun>(`/projects/${id}/audits/${runID}`),
   cancelProjectAudit: (id: number, runID: number) =>
     post<ProjectAuditRun>(`/projects/${id}/audits/${runID}/cancel`, {}),

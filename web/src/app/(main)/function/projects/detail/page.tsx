@@ -47,6 +47,7 @@ import type {
   ProjectAccessProfile,
   ProjectAuditRun,
   ScanEstimate,
+  ScanProfile,
 } from "@/lib/types";
 
 function fmtTime(v?: string) {
@@ -262,6 +263,7 @@ function DetailInner() {
   const [loading, setLoading] = React.useState(true);
   const [checking, setChecking] = React.useState(false);
   const [starting, setStarting] = React.useState(false);
+  const [scanProfile, setScanProfile] = React.useState<ScanProfile>("standard");
   const [cancellingAudit, setCancellingAudit] = React.useState(false);
   const [preparingIncremental, setPreparingIncremental] = React.useState(false);
   const [startingIncremental, setStartingIncremental] = React.useState(false);
@@ -299,11 +301,10 @@ function DetailInner() {
       return;
     }
     setLoading(true);
-    Promise.all([api.project(id), api.projectAudits(id).catch(() => []), api.projectScanEstimate(id).catch(() => null)])
-      .then(([x, runs, estimate]) => {
+    Promise.all([api.project(id), api.projectAudits(id).catch(() => [])])
+      .then(([x, runs]) => {
         setP(x);
         setAudits(runs);
-        setScanEstimate(estimate);
         setError("");
       })
       .catch((e) => setError((e as Error).message))
@@ -317,11 +318,41 @@ function DetailInner() {
     };
   }, [load]);
 
+  React.useEffect(() => {
+    if (!Number.isFinite(id) || id <= 0) return;
+    let active = true;
+    api
+      .projectScanEstimate(id, scanProfile)
+      .then((estimate) => {
+        if (active) setScanEstimate(estimate);
+      })
+      .catch(() => {
+        if (active) setScanEstimate(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [id, scanProfile]);
+
   async function startFullAudit() {
     if (!p) return;
+    let estimate = scanEstimate;
+    if (!estimate?.available || estimate.profile !== scanProfile) {
+      estimate = await api.projectScanEstimate(p.id, scanProfile).catch(() => null);
+      if (estimate) setScanEstimate(estimate);
+    }
+    const profileLabel = scanProfile === "quick" ? "快速" : scanProfile === "deep" ? "深度" : "标准";
+    if (estimate?.available && ((estimate.intents ?? 0) > 800 || (estimate.eta_hours ?? 0) > 10)) {
+      const ok = window.confirm(
+        `当前选择「${profileLabel}」档：预计接口 ${estimate.endpoints ?? 0} 个、意图 ${
+          estimate.intents ?? 0
+        } 个，${Math.ceil(estimate.eta_hours ?? 0)} 小时完成。超过 800 意图或 10 小时，是否继续发起全量审计？`,
+      );
+      if (!ok) return;
+    }
     setStarting(true);
     try {
-      const res = await api.startProjectAudit(p.id, "full");
+      const res = await api.startProjectAudit(p.id, "full", scanProfile);
       setAudits((prev) => [res.audit, ...prev.filter((r) => r.id !== res.audit.id)]);
       toast.success("已开始拉取源码，准备全量审计任务…");
       const runID = res.audit.id;
@@ -787,6 +818,17 @@ function DetailInner() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={scanProfile}
+            onChange={(e) => setScanProfile(e.target.value as ScanProfile)}
+            className="h-8 rounded-md border bg-background px-2 text-xs"
+            disabled={fullAuditDisabled}
+            title="扫描档位"
+          >
+            <option value="quick">快速档</option>
+            <option value="standard">标准档</option>
+            <option value="deep">深度档</option>
+          </select>
           <Button onClick={startFullAudit} disabled={fullAuditDisabled}>
             {fullAuditBusy ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}
             {starting
@@ -1537,10 +1579,12 @@ function DetailInner() {
             <div className="rounded-lg border p-3">
               {scanEstimate?.available && (
                 <div className="mb-3 rounded-md border bg-muted/20 px-2 py-1.5 text-[11px] text-muted-foreground">
-                  <div className="font-medium text-foreground">上次矩阵扫描预估</div>
+                  <div className="font-medium text-foreground">
+                    当前档位扫描预估（{scanEstimate.profile === "quick" ? "快速" : scanEstimate.profile === "deep" ? "深度" : "标准"}）
+                  </div>
                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
                     <span>接口 {scanEstimate.endpoints}</span>
-                    <span>可审计 {scanEstimate.applicable}</span>
+                    <span>可审计 {scanEstimate.applicable} / 全量 {scanEstimate.all_applicable}</span>
                     <span>预计意图 {scanEstimate.intents}</span>
                     <span>{scanEstimate.workers} worker</span>
                     <span>约 {Math.ceil(scanEstimate.eta_hours ?? 0)} 小时</span>
@@ -1557,6 +1601,19 @@ function DetailInner() {
                   <div className="text-muted-foreground mt-0.5 text-xs">
                     下载当前分支 {trackedBranch} 的源码并建立完整矩阵基线。
                   </div>
+                  <label className="mt-2 flex items-center gap-2 text-xs">
+                    <span className="text-muted-foreground">扫描档位</span>
+                    <select
+                      value={scanProfile}
+                      onChange={(e) => setScanProfile(e.target.value as ScanProfile)}
+                      className="h-7 rounded border bg-background px-2"
+                      disabled={fullAuditDisabled}
+                    >
+                      <option value="quick">快速</option>
+                      <option value="standard">标准</option>
+                      <option value="deep">深度</option>
+                    </select>
+                  </label>
                 </div>
                 <Button size="sm" onClick={startFullAudit} disabled={fullAuditDisabled}>
                   {fullAuditBusy ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}

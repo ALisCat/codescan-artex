@@ -2156,6 +2156,7 @@ export interface ScanEstimate {
   run_status?: string;
   matrix_cells?: number;
   applicable?: number;
+  all_applicable?: number;
   not_applicable?: number;
   unverified?: number;
   endpoints?: number;
@@ -2163,4 +2164,7 @@ export interface ScanEstimate {
   workers?: number;
   merge_dispatch?: boolean;
   eta_hours?: number;
+  profile?: ScanProfile;
 }
+
+export type ScanProfile = "quick" | "standard" | "deep";

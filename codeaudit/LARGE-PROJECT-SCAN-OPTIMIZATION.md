@@ -103,5 +103,40 @@ CallGraphDump / JavaParser：约 8 分 32 秒
 
 - 新增 `GET /api/projects/{id}/scan-estimate`。
 - 基于最新矩阵统计接口数、可审计格、预计意图、worker 数、预计工时和 N/A/未验证数量。
-- 项目详情“发起全量审计”卡片显示上一次矩阵的扫描预估。
-- 当前项目 13 示例：3748 可审计格、2669 预计意图、3 worker、约 29.7 小时。
+- 项目详情“发起全量审计”卡片显示当前扫描档位的预估。
+- 预估已按 authz Controller / SSRF sink 聚合派发计算，和实际 generate-intents 逻辑一致。
+
+### 扫描档位（2026-11-24）
+
+- 快速 / 标准 / 深度三档；默认标准档。
+- 快速档：只保留高价值接口的 authz、P0/P1 的 SSRF，以及认证/SQL 注入/上传/路径穿越/命令执行/反序列化/XXE/密钥/加密/依赖/敏感数据等高信号类型。
+- 标准档：保留全部非 authz/SSRF 类型；authz 只保留敏感业务接口；SSRF 只保留 P1 或 URL/回调类参数。
+- 深度档：全部可审计格。
+- 发起前如果预计意图 > 800 或 ETA > 10 小时，浏览器会要求人工确认。
+- 当前项目 13 实测预估：
+
+```text
+快速：1214 可审计格 / 1120 接口 / 414 意图 / 3 worker / 约 4.6 小时
+标准：1665 可审计格 / 1376 接口 / 623 意图 / 3 worker / 约 6.9 小时
+深度：3748 可审计格 / 2663 接口 / 1129 意图 / 3 worker / 约 12.5 小时
+```
+
+### authz / SSRF 聚合派发
+
+- `matrix_aggregate_authz=true`（默认）：authz 按 Controller 聚合，每组最多 8 格。
+- `matrix_aggregate_ssrf=true`（默认）：SSRF 按 sink 文件/API 聚合，每组最多 6 格。
+- 聚合只改变意图边界，矩阵仍保留逐格记录和逐格 verdict；worker 在一个意图里对每个 cell_key 分别提交结论。
+- 对照：深度的预计意图从 2669 降到 1129。
+
+### N/A 延迟导入
+
+- `matrix_lazy_na_import=true`（默认）：大于 2000 格的导入先写可审计格并生成意图，N/A 行在后台补齐。
+- 任务启动不再等待 4.5 万行 N/A 插入；矩阵统计会在后台导入完成后刷新。
+- 失败只记录日志，不影响已启动的扫描。
+
+### CallGraph commit 缓存
+
+- `matrix.graph.build` 新增 `--cache-dir`；按 Java 源码内容哈希缓存 `callgraph.json`。
+- 缓存位于 `data/cache/callgraph/<sha256>.json`，同一 commit 重试命中后跳过 JavaParser 阶段。
+- 已用 fixture 验证：首次 1.6s，命中 0.08s；大项目预计节省约 8 分钟。
+- 缓存版本 `callgraph-v2`；Java 工具升级时需提升版本号。

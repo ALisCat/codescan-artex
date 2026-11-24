@@ -9,10 +9,12 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
@@ -84,9 +86,32 @@ func (s *Server) importMatrixCells(t *Task, body importCellsBody) (int, int, err
 	if err != nil || taskID <= 0 {
 		return 0, 0, fmt.Errorf("task id 无效")
 	}
-	n, err := s.m.PG().Cells().Import(taskID, body.Tasks)
-	if err != nil {
-		return 0, 0, fmt.Errorf("导入矩阵失败: %w", err)
+	// N/A 格数量通常远大于可审计格（大项目约 4.5 万行）。先导入可审计格并
+	// 生成意图，让扫描尽快启动；N/A 行在后台补齐，矩阵统计随后刷新。
+	var deferredNA []db.CellInput
+	lazyNA := true
+	if v, ok, _ := s.m.PG().GetSetting("matrix_lazy_na_import"); ok && strings.TrimSpace(v) == "false" {
+		lazyNA = false
+	}
+	if lazyNA && len(body.Tasks) > 2000 {
+		keep := make([]db.CellInput, 0, len(body.Tasks))
+		for _, c := range body.Tasks {
+			if c.Eligibility == "not_applicable" {
+				deferredNA = append(deferredNA, c)
+				continue
+			}
+			keep = append(keep, c)
+		}
+		if len(deferredNA) > 0 {
+			body.Tasks = keep
+		}
+	}
+	n := 0
+	if len(body.Tasks) > 0 {
+		n, err = s.m.PG().Cells().Import(taskID, body.Tasks)
+		if err != nil {
+			return 0, 0, fmt.Errorf("导入矩阵失败: %w", err)
+		}
 	}
 	seeded := 0
 	if body.Seed == nil || *body.Seed {
@@ -95,7 +120,21 @@ func (s *Server) importMatrixCells(t *Task, body importCellsBody) (int, int, err
 			return n, 0, fmt.Errorf("导入 %d 条成功，但生成意图失败: %w", n, err)
 		}
 	}
-	return n, seeded, nil
+	if len(deferredNA) > 0 {
+		go func() {
+			time.Sleep(2 * time.Second)
+			imported, importErr := s.m.PG().Cells().Import(taskID, deferredNA)
+			if importErr != nil {
+				log.Printf("[matrix] task %d N/A 延迟导入失败: %v", taskID, importErr)
+				return
+			}
+			log.Printf("[matrix] task %d N/A 延迟导入 %d 格", taskID, imported)
+			if t != nil {
+				t.Notify()
+			}
+		}()
+	}
+	return n + len(deferredNA), seeded, nil
 }
 
 // 人工发起审计时补齐判定标准（矩阵里 N/A/低置信格子通常没有 checklist）。
@@ -620,7 +659,14 @@ func (s *Server) seedCellIntents(t *Task, limit int) (int, error) {
 	if v, ok, _ := s.m.PG().GetSetting("matrix_merge_dispatch"); ok && v == "false" {
 		maxPer = 1
 	}
-	groups, err := s.m.PG().Cells().PendingGroups(taskID, maxGroups, maxPer)
+	aggregateAuthz, aggregateSSRF := true, true
+	if v, ok, _ := s.m.PG().GetSetting("matrix_aggregate_authz"); ok && strings.TrimSpace(v) == "false" {
+		aggregateAuthz = false
+	}
+	if v, ok, _ := s.m.PG().GetSetting("matrix_aggregate_ssrf"); ok && strings.TrimSpace(v) == "false" {
+		aggregateSSRF = false
+	}
+	groups, err := s.m.PG().Cells().PendingGroups(taskID, maxGroups, maxPer, aggregateAuthz && maxPer > 1, aggregateSSRF && maxPer > 1)
 	if err != nil {
 		return 0, err
 	}
@@ -651,8 +697,18 @@ func (s *Server) seedCellIntents(t *Task, limit int) (int, error) {
 				prio = c.Priority
 			}
 		}
-		summary := fmt.Sprintf("审计 %s %s 的「%s」风险（%d 个判定项）",
-			g.Method, g.EndpointURL, strings.Join(names, "、"), len(cases))
+		summary := ""
+		if g.Aggregated {
+			endpoints := make(map[string]struct{}, len(g.Cells))
+			for _, c := range g.Cells {
+				endpoints[c.Method+" "+c.EndpointURL] = struct{}{}
+			}
+			summary = fmt.Sprintf("审计 %s 聚合组的「%s」风险（%d 个接口 / %d 个判定项）",
+				g.AggregateLabel, strings.Join(names, "、"), len(endpoints), len(cases))
+		} else {
+			summary = fmt.Sprintf("审计 %s %s 的「%s」风险（%d 个判定项）",
+				g.Method, g.EndpointURL, strings.Join(names, "、"), len(cases))
+		}
 		note := ""
 		for _, c := range g.Cells {
 			if strings.TrimSpace(c.HintsNote) != "" {

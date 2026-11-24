@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Autumn-27/artex/db"
 )
 
 const matrixAnalyzerList = "authz,authn,sql-injection,command-exec,ssrf,file-upload,path-traversal,deserialization,xss,business_logic,xxe,csrf,open_redirect,ssti,ldap_injection,mass_assignment,race_condition,secrets,crypto,dependency,sensitive_data"
@@ -121,8 +123,19 @@ func (s *Server) buildMatrixImport(ctx context.Context, sourceDir, outDir string
 	findings := filepath.Join(outDir, "findings.json")
 	bound := filepath.Join(outDir, "bound")
 	importPath := filepath.Join(outDir, "import.json")
+	// JavaParser 调用图按源码内容缓存；同一 commit 重试/重新准备时可直接复用，
+	// 跳过大项目约 8 分钟的解析阶段。缓存损坏时会自动回退重跑。
+	cacheDir := filepath.Join(s.m.dir, "cache", "callgraph")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		log.Printf("[matrix] 创建调用图缓存目录失败（继续无缓存）: %v", err)
+		cacheDir = ""
+	}
+	buildArgs := []string{"matrix.graph.build", sourceDir, graph}
+	if cacheDir != "" {
+		buildArgs = append(buildArgs, "--cache-dir", cacheDir)
+	}
 	steps := [][]string{
-		{"matrix.graph.build", sourceDir, graph},
+		buildArgs,
 		{"matrix.run", graph, "--analyzers", matrixAnalyzerList, "--out", findings},
 		{"matrix.bind", graph, findings, bound},
 		{"matrix.mkimport", bound + ".cells.json", bound + ".tasks.json", importPath},
@@ -146,7 +159,122 @@ func (s *Server) buildMatrixImport(ctx context.Context, sourceDir, outDir string
 // prepareTaskMatrix runs graph → analyzers → binder → import and seeds ca_cells.
 // It is intentionally called only after the source tree has been attached and
 // before the task is launched.
-func (s *Server) prepareTaskMatrix(ctx context.Context, t *Task, requireCells bool) (int, int, error) {
+
+type scanProfile string
+
+const (
+	scanProfileQuick    scanProfile = "quick"
+	scanProfileStandard scanProfile = "standard"
+	scanProfileDeep     scanProfile = "deep"
+)
+
+func normalizeScanProfile(raw string) scanProfile {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case string(scanProfileQuick):
+		return scanProfileQuick
+	case string(scanProfileDeep):
+		return scanProfileDeep
+	default:
+		return scanProfileStandard
+	}
+}
+
+func scanProfileLabel(profile scanProfile) string {
+	switch profile {
+	case scanProfileQuick:
+		return "快速"
+	case scanProfileDeep:
+		return "深度"
+	default:
+		return "标准"
+	}
+}
+
+func highValueEndpoint(url string) bool {
+	u := strings.ToLower(url)
+	for _, word := range []string{
+		"admin", "manage", "medicalrecord", "patient", "order", "pay", "refund",
+		"register", "appointment", "doctor", "user", "permission", "role", "auth",
+		"export", "download", "upload", "share", "record", "report", "account",
+		"bill", "charge", "prescription", "病历", "支付", "挂号", "退款", "患者",
+	} {
+		if strings.Contains(u, word) {
+			return true
+		}
+	}
+	return false
+}
+
+func highValueSSRFPath(url string) bool {
+	u := strings.ToLower(url)
+	for _, word := range []string{
+		"url", "uri", "redirect", "callback", "webhook", "proxy", "fetch",
+		"download", "image", "file", "import", "notify", "request", "http",
+	} {
+		if strings.Contains(u, word) {
+			return true
+		}
+	}
+	return false
+}
+
+// scanProfileAllows decides whether an applicable cell enters this scan profile.
+// The matrix still imports every cell (including N/A/unknown); filtered cells
+// become unverified so the matrix remains visible but is not dispatched.
+func scanProfileAllows(profile scanProfile, vuln, url string, priority int) bool {
+	if profile == scanProfileDeep {
+		return true
+	}
+	sensitive := highValueEndpoint(url)
+	switch vuln {
+	case "authz":
+		// 标准档只对敏感业务接口做越权；快速档在敏感接口里再收敛到 P0/P1。
+		if profile == scanProfileQuick {
+			return sensitive && priority >= 14
+		}
+		return sensitive
+	case "ssrf":
+		if profile == scanProfileQuick {
+			return priority >= 20 || (priority >= 14 && highValueSSRFPath(url))
+		}
+		return priority >= 14 || highValueSSRFPath(url)
+	case "authn", "sql-injection", "file-upload", "path-traversal",
+		"command-exec", "deserialization", "xxe", "secrets", "crypto",
+		"dependency", "sensitive_data":
+		return true
+	default:
+		if profile == scanProfileQuick {
+			return priority >= 20 || (sensitive && priority >= 14)
+		}
+		return true
+	}
+}
+
+func filterMatrixByScanProfile(body importCellsBody, profile scanProfile) importCellsBody {
+	if profile == scanProfileDeep {
+		return body
+	}
+	out := body
+	out.Tasks = make([]db.CellInput, len(body.Tasks))
+	copy(out.Tasks, body.Tasks)
+	for i := range out.Tasks {
+		cell := &out.Tasks[i]
+		if cell.Eligibility != "applicable" {
+			continue
+		}
+		if scanProfileAllows(profile, cell.VulnClass, cell.Endpoint.URL, cell.Priority) {
+			continue
+		}
+		cell.Eligibility = "unverified"
+		cell.Hold = false
+		cell.Priority = 0
+		cell.Bucket = "SKIP"
+		cell.Reason = "未纳入" + scanProfileLabel(profile) + "扫描档位"
+	}
+	return out
+}
+
+func (s *Server) prepareTaskMatrix(ctx context.Context, t *Task, requireCells bool, profile scanProfile) (int, int, error) {
 	if t == nil || strings.TrimSpace(t.SourcePath) == "" {
 		return 0, 0, fmt.Errorf("任务没有源码目录")
 	}
@@ -162,6 +290,7 @@ func (s *Server) prepareTaskMatrix(ctx context.Context, t *Task, requireCells bo
 	if err != nil {
 		return 0, 0, err
 	}
+	body = filterMatrixByScanProfile(body, profile)
 	if len(body.Tasks) == 0 && !requireCells {
 		log.Printf("[matrix] task %s 没有可派发矩阵格，保留标准任务路径", t.ID)
 		return 0, 0, nil
@@ -244,7 +373,7 @@ func (s *Server) prepareLocalUploadMatrix(ctx context.Context, t *Task) (bool, e
 		log.Printf("[matrix] task %s 没有 Java 源码，跳过矩阵流水线", t.ID)
 		return false, nil
 	}
-	if _, _, err := s.prepareTaskMatrix(ctx, t, false); err != nil {
+	if _, _, err := s.prepareTaskMatrix(ctx, t, false, scanProfileDeep); err != nil {
 		return true, err
 	}
 	return true, nil

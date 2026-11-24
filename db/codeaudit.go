@@ -12,6 +12,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -506,14 +508,90 @@ func (s *CellStore) Stats(taskID int64) (*CellStats, error) {
 // CellGroup 是同一接口的待办格子集合（派发时合并成一个意图，避免同一处代码被
 // 多个类型各报一次 finding）。
 type CellGroup struct {
-	EndpointURL string
-	Method      string
-	Cells       []Cell
+	EndpointURL    string
+	Method         string
+	Cells          []Cell
+	Aggregated     bool
+	AggregateLabel string
+}
+
+// 聚合派发：authz 按 Controller、SSRF 按 sink 归组，避免 2500 个 authz 格
+// 各自生成一个意图。组内仍保留逐格判定，矩阵行不变。
+const (
+	authzAggregatePerGroup = 8
+	ssrfAggregatePerGroup  = 6
+)
+
+type matrixHintFlow struct {
+	Cls  string `json:"cls"`
+	File string `json:"file"`
+	Kind string `json:"kind"`
+}
+type matrixHintSink struct {
+	API  string `json:"api"`
+	File string `json:"file"`
+	Line int    `json:"line"`
+}
+type matrixHints struct {
+	Flow       []matrixHintFlow `json:"flow"`
+	Sinks      []matrixHintSink `json:"sinks"`
+	AuthzModel struct {
+		Decisions []struct {
+			File string `json:"file"`
+		} `json:"decisions"`
+	} `json:"authz_model"`
+}
+
+func shortMatrixClass(cls string) string {
+	cls = strings.TrimSpace(cls)
+	if i := strings.LastIndex(cls, "."); i >= 0 && i+1 < len(cls) {
+		return cls[i+1:]
+	}
+	return cls
+}
+
+func matrixAggregateLabel(c *Cell, aggregateAuthz, aggregateSSRF bool) string {
+	if c == nil || (c.VulnClass != "authz" && c.VulnClass != "ssrf") {
+		return ""
+	}
+	var h matrixHints
+	if len(c.Hints) > 0 {
+		_ = json.Unmarshal(c.Hints, &h)
+	}
+	if c.VulnClass == "authz" && aggregateAuthz {
+		for _, f := range h.Flow {
+			if f.Cls != "" && strings.Contains(strings.ToLower(f.Cls), "controller") {
+				return shortMatrixClass(f.Cls)
+			}
+		}
+		if len(h.Flow) > 0 && h.Flow[0].Cls != "" {
+			return shortMatrixClass(h.Flow[0].Cls)
+		}
+		if len(h.AuthzModel.Decisions) > 0 && h.AuthzModel.Decisions[0].File != "" {
+			return filepath.Base(h.AuthzModel.Decisions[0].File)
+		}
+	}
+	if c.VulnClass == "ssrf" && aggregateSSRF {
+		for _, sink := range h.Sinks {
+			if sink.API == "" && sink.File == "" {
+				continue
+			}
+			label := strings.TrimSpace(sink.API)
+			if sink.File != "" {
+				if label != "" {
+					label += " @ "
+				}
+				label += filepath.Base(sink.File)
+			}
+			return label
+		}
+	}
+	return ""
 }
 
 // PendingGroups 把待办格子按 (method,url) 分组；每组最多 maxPerGroup 个、
 // 最多返回 maxGroups 组。
-func (s *CellStore) PendingGroups(taskID int64, maxGroups, maxPerGroup int) ([]CellGroup, error) {
+func (s *CellStore) PendingGroups(taskID int64, maxGroups, maxPerGroup int, aggregateAuthz, aggregateSSRF bool) ([]CellGroup, error) {
 	if maxGroups <= 0 {
 		maxGroups = 20
 	}
@@ -536,38 +614,71 @@ ORDER BY priority DESC, id ASC`, taskID)
 	if err != nil {
 		return nil, err
 	}
-	order := []string{}
-	idx := map[string]*CellGroup{}
+	return GroupCells(cells, maxGroups, maxPerGroup, aggregateAuthz, aggregateSSRF), nil
+}
+
+// GroupCells applies merge/aggregation rules to pending cells. It is also used
+// by the cost estimate so the preview matches dispatch behavior.
+func GroupCells(cells []Cell, maxGroups, maxPerGroup int, aggregateAuthz, aggregateSSRF bool) []CellGroup {
+	if maxGroups <= 0 {
+		maxGroups = 20
+	}
+	if maxPerGroup <= 0 {
+		maxPerGroup = 4
+	}
+	order := []*CellGroup{}
+	active := map[string]*CellGroup{}
 	for _, c := range cells {
 		key := c.Method + " " + c.EndpointURL
+		limit := maxPerGroup
+		label := ""
 		if maxPerGroup == 1 {
 			// 单格派发：每个格子独立成组，即使同一接口有多个类型
 			key = "cell:" + c.CellKey
+		} else {
+			label = matrixAggregateLabel(&c, aggregateAuthz, aggregateSSRF)
+			if label != "" {
+				key = c.VulnClass + ":aggregate:" + label
+				if c.VulnClass == "authz" {
+					limit = authzAggregatePerGroup
+				} else {
+					limit = ssrfAggregatePerGroup
+				}
+			}
 		}
-		g := idx[key]
+		g := active[key]
+		if g != nil && len(g.Cells) >= limit {
+			if label == "" {
+				// 同接口超过合并上限时保留余量，下一轮再派发。
+				continue
+			}
+			g = nil // 聚合组满后开下一个同标签分组
+		}
 		if g == nil {
 			if len(order) >= maxGroups*3 { // 先收集，后面再截断
 				break
 			}
-			g = &CellGroup{EndpointURL: c.EndpointURL, Method: c.Method}
-			idx[key] = g
-			order = append(order, key)
-		}
-		if len(g.Cells) >= maxPerGroup {
-			continue
+			g = &CellGroup{
+				EndpointURL:    c.EndpointURL,
+				Method:         c.Method,
+				Aggregated:     label != "",
+				AggregateLabel: label,
+			}
+			active[key] = g
+			order = append(order, g)
 		}
 		g.Cells = append(g.Cells, c)
 	}
 	out := make([]CellGroup, 0, maxGroups)
-	for _, k := range order {
-		if g := idx[k]; g != nil && len(g.Cells) > 0 {
+	for _, g := range order {
+		if g != nil && len(g.Cells) > 0 {
 			out = append(out, *g)
 			if len(out) >= maxGroups {
 				break
 			}
 		}
 	}
-	return out, nil
+	return out
 }
 
 // Requeue 把 dispatched 的格子退回 pending（意图 blocked/exhausted/stopped 时调用）。

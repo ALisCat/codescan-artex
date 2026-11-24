@@ -58,8 +58,9 @@ func (s *Server) startProjectAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Mode      string `json:"mode"`
-		AutoStart *bool  `json:"auto_start"`
+		Mode        string `json:"mode"`
+		AutoStart   *bool  `json:"auto_start"`
+		ScanProfile string `json:"scan_profile"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, 400, "请求格式不正确")
@@ -144,9 +145,10 @@ func (s *Server) startProjectAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	autoStart := req.AutoStart == nil || *req.AutoStart
+	profile := normalizeScanProfile(req.ScanProfile)
 	// Keep the context override out of the request lifetime: the request returns
 	// immediately, but the download may take minutes.
-	go s.runProjectFullAudit(run, p, me, c, up.ID, zipPath, sourceDir, target, autoStart)
+	go s.runProjectFullAudit(run, p, me, c, up.ID, zipPath, sourceDir, target, autoStart, profile)
 	log.Printf("[project] 项目 %s 发起全量审计 run=%d target=%s upload=%s", p.Path, run.ID, shortSHA(target), uploadID)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"audit":     run,
@@ -205,7 +207,7 @@ func (s *Server) cancelProjectAudit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, updated)
 }
 
-func (s *Server) runProjectFullAudit(run *db.ProjectAuditRun, p *db.CodeProject, me *db.User, c *gitlabsrc.Client, uploadID, zipPath, sourceDir, target string, autoStart bool) {
+func (s *Server) runProjectFullAudit(run *db.ProjectAuditRun, p *db.CodeProject, me *db.User, c *gitlabsrc.Client, uploadID, zipPath, sourceDir, target string, autoStart bool, profile scanProfile) {
 	var task *Task
 	fail := func(msg string) {
 		_ = s.m.pg.TaskUploads().MarkTaskUploadFailed(uploadID, msg)
@@ -250,7 +252,7 @@ func (s *Server) runProjectFullAudit(run *db.ProjectAuditRun, p *db.CodeProject,
 	desc := fmt.Sprintf("审计 GitLab 项目 %s（%s @ %s）", p.Path, projectBranch(p), shortSHA(target))
 	goal := "对该项目源码进行全量静态代码审计，优先检查 Java 代码中的安全缺陷；结论必须有源码证据，不运行应用、不发请求、不编译业务源码。"
 	t, err := s.m.CreateTaskWithOptions(desc, goal, db.TaskCreateOptions{
-		Name:          fmt.Sprintf("%s · 全量审计 %s", p.Name, shortSHA(target)),
+		Name:          fmt.Sprintf("%s · 全量审计 %s · %s档", p.Name, shortSHA(target), scanProfileLabel(profile)),
 		CreatedBy:     &me.ID,
 		AccessProfile: p.AccessProfile,
 	})
@@ -265,7 +267,7 @@ func (s *Server) runProjectFullAudit(run *db.ProjectAuditRun, p *db.CodeProject,
 	}
 	// 项目审计必须走矩阵：源码就绪后先跑图/分析器/绑定/导入，再启动任务。
 	// 失败时删除任务，避免留下一个“看起来正常、实际上走标准 planner”的审计任务。
-	if _, _, err := s.prepareTaskMatrix(ctx, task, true); err != nil {
+	if _, _, err := s.prepareTaskMatrix(ctx, task, true, profile); err != nil {
 		fail("生成审计矩阵失败：" + err.Error())
 		return
 	}
@@ -423,11 +425,37 @@ func (s *Server) projectScanEstimate(w http.ResponseWriter, r *http.Request) {
 	if v, ok, _ := s.m.PG().GetSetting("matrix_merge_dispatch"); ok && strings.TrimSpace(v) == "false" {
 		merge = false
 	}
-	endpoints, _, intents, err := s.m.PG().Cells().EstimateScan(taskID, merge)
+	profile := normalizeScanProfile(r.URL.Query().Get("profile"))
+	cells, err := s.m.PG().Cells().List(taskID, "")
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	byEndpoint := make(map[string]struct{})
+	selected := make([]db.Cell, 0, len(cells))
+	for i := range cells {
+		cell := &cells[i]
+		if cell.Eligibility != "applicable" ||
+			!scanProfileAllows(profile, cell.VulnClass, cell.EndpointURL, cell.Priority) {
+			continue
+		}
+		selected = append(selected, *cell)
+		byEndpoint[cell.Method+" "+cell.EndpointURL] = struct{}{}
+	}
+	maxPer := 1
+	if merge {
+		maxPer = 4
+	}
+	aggregateAuthz, aggregateSSRF := true, true
+	if v, ok, _ := s.m.PG().GetSetting("matrix_aggregate_authz"); ok && strings.TrimSpace(v) == "false" {
+		aggregateAuthz = false
+	}
+	if v, ok, _ := s.m.PG().GetSetting("matrix_aggregate_ssrf"); ok && strings.TrimSpace(v) == "false" {
+		aggregateSSRF = false
+	}
+	groups := db.GroupCells(selected, 100000, maxPer, aggregateAuthz && merge, aggregateSSRF && merge)
+	intents := len(groups)
+	selectedApplicable := len(selected)
 	workers := s.m.Workers()
 	etaHours := 0.0
 	if workers > 0 {
@@ -440,11 +468,13 @@ func (s *Server) projectScanEstimate(w http.ResponseWriter, r *http.Request) {
 		"task_status":    s.resolvedTaskStatus(t),
 		"run_id":         run.ID,
 		"run_status":     run.Status,
+		"profile":        profile,
 		"matrix_cells":   stats.Total,
-		"applicable":     stats.ApplicableTotal,
+		"applicable":     selectedApplicable,
+		"all_applicable": stats.ApplicableTotal,
 		"not_applicable": stats.NA,
 		"unverified":     stats.Unverified,
-		"endpoints":      endpoints,
+		"endpoints":      len(byEndpoint),
 		"intents":        intents,
 		"workers":        workers,
 		"merge_dispatch": merge,

@@ -84,7 +84,7 @@ flowchart LR
 - 创建执行任务并启动 worker；
 - 任务成功后推进 `last_audited_commit`。
 
-全量任务建立完整矩阵基线。
+全量任务建立完整矩阵基线。发起前可选择快速 / 标准 / 深度档位；预计意图超过 800 或 ETA 超过 10 小时会要求人工确认。深度档保留全部矩阵格，标准档收敛 authz/SSRF，快速档只保留高价值接口和高信号类型。矩阵派发默认把 authz 按 Controller、SSRF 按 sink 聚合，并延迟导入 N/A 行；同一源码内容会复用 CallGraph 缓存。
 
 ### 增量预览
 

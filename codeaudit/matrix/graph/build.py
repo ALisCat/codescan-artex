@@ -10,10 +10,12 @@
   --rebuild                           强制重跑 JavaParser
 """
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from collections import defaultdict, deque
@@ -41,7 +43,49 @@ def _load_cellgen():
     return mod
 
 
-def run_java_sidecar(root: Path, out: Path) -> None:
+CALLGRAPH_CACHE_VERSION = "callgraph-v2"
+
+
+def source_fingerprint(root: Path) -> str:
+    """Stable content hash for the Java inputs of the call graph."""
+    h = hashlib.sha256()
+    h.update(CALLGRAPH_CACHE_VERSION.encode())
+    for p in sorted(root.rglob("*.java")):
+        if not p.is_file():
+            continue
+        rel = str(p.relative_to(root))
+        h.update(rel.encode("utf-8", errors="replace"))
+        h.update(b"\0")
+        try:
+            with p.open("rb") as f:
+                while True:
+                    chunk = f.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    h.update(chunk)
+        except OSError:
+            h.update(b"<unreadable>")
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def run_java_sidecar(root: Path, out: Path, cache_dir=None, rebuild: bool = False) -> None:
+    cache_path = None
+    if cache_dir is not None:
+        key = source_fingerprint(root)
+        cache_path = cache_dir / f"{key}.json"
+        if not rebuild and cache_path.exists():
+            try:
+                out.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(cache_path, out)
+                print(f"callgraph cache hit: {key}", flush=True)
+                return
+            except OSError:
+                # A broken/unreadable cache should never block the scan.
+                try:
+                    cache_path.unlink()
+                except OSError:
+                    pass
     java_home = os.environ.get("JAVA_HOME", "")
     java = Path(java_home) / "bin" / "java" if java_home else None
     if not java or not java.exists():
@@ -61,6 +105,15 @@ def run_java_sidecar(root: Path, out: Path) -> None:
     heap = os.environ.get("CODEAUDIT_JAVA_XMX", "6g").strip() or "6g"
     subprocess.run([str(java), f"-Xmx{heap}", "-cp", cp, "CallGraphDump", str(root), str(out)],
                    cwd=str(CALLGRAPH_DIR), check=True)
+    if cache_path is not None:
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cache_path.with_suffix(".tmp")
+            shutil.copyfile(out, tmp)
+            os.replace(tmp, cache_path)
+            print(f"callgraph cache saved: {cache_path.name}", flush=True)
+        except OSError as exc:
+            print(f"callgraph cache save skipped: {exc}", flush=True)
 
 
 class GraphBuilder:
@@ -347,14 +400,16 @@ def main():
     ap.add_argument("root")
     ap.add_argument("out")
     ap.add_argument("--callgraph")
+    ap.add_argument("--cache-dir")
     ap.add_argument("--rebuild", action="store_true")
     args = ap.parse_args()
     root = Path(args.root).resolve()
     out = Path(args.out).resolve()
 
     cg_path = Path(args.callgraph) if args.callgraph else out.with_suffix(".callgraph.json")
+    cache_dir = Path(args.cache_dir).resolve() if args.cache_dir else None
     if args.rebuild or not cg_path.exists():
-        run_java_sidecar(root, cg_path)
+        run_java_sidecar(root, cg_path, cache_dir=cache_dir, rebuild=args.rebuild)
     cg = json.loads(cg_path.read_text(encoding="utf-8"))
 
     cellgen = _load_cellgen()
