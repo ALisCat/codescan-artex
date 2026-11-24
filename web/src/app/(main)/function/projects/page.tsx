@@ -85,6 +85,7 @@ export default function ProjectsPage() {
   const [name, setName] = React.useState("");
   const [nameTouched, setNameTouched] = React.useState(false);
   const [branch, setBranch] = React.useState("");
+  const [branchQuery, setBranchQuery] = React.useState("");
   const [branches, setBranches] = React.useState<GitLabBranch[]>([]);
   const [selectedProject, setSelectedProject] = React.useState<GitLabProject | null>(null);
   const [available, setAvailable] = React.useState<GitLabProject[]>([]);
@@ -187,10 +188,22 @@ export default function ProjectsPage() {
     setSelectedProject(p);
     setPath(p.path_with_namespace);
     setNameTouched(false);
+    setBranchQuery("");
     setName(defaultProjectName(p, p.default_branch || "main"));
     setBranch(p.default_branch || "main");
     void loadBranchesFor(p, p.default_branch, true);
   }
+
+  const filteredBranches = React.useMemo(() => {
+    const needle = branchQuery.trim().toLowerCase();
+    if (!needle) return branches;
+    const matches = branches.filter((item) => item.name.toLowerCase().includes(needle));
+    const selected = branches.find((item) => item.name === branch);
+    if (selected && !matches.some((item) => item.name === branch)) {
+      return [selected, ...matches];
+    }
+    return matches;
+  }, [branch, branchQuery, branches]);
 
   async function lookupProject() {
     const value = path.trim();
@@ -522,18 +535,33 @@ export default function ProjectsPage() {
               <div className="grid min-w-0 gap-3 sm:grid-cols-2">
                 <div className="min-w-0 space-y-2">
                   <Label htmlFor="project-branch">审计分支</Label>
+                  <Input
+                    value={branchQuery}
+                    onChange={(e) => setBranchQuery(e.target.value)}
+                    placeholder="搜索分支，例如 pre-release"
+                    disabled={!selectedProject || loadingBranches}
+                    className="h-8"
+                  />
                   <Select value={branch} onValueChange={chooseBranch} disabled={!selectedProject || loadingBranches}>
                     <SelectTrigger id="project-branch" className="w-full min-w-0">
                       <SelectValue placeholder={loadingBranches ? "读取分支…" : "先解析项目"} />
                     </SelectTrigger>
                     <SelectContent>
-                      {branches.map((b) => (
+                      {filteredBranches.map((b) => (
                         <SelectItem key={b.name} value={b.name}>
                           {b.name}
                         </SelectItem>
                       ))}
+                      {filteredBranches.length === 0 && (
+                        <SelectItem value="__no_matching_branch__" disabled>
+                          没有匹配的分支
+                        </SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
+                  <div className="text-muted-foreground text-[11px]">
+                    共 {branches.length} 个分支
+                  </div>
                 </div>
                 <div className="min-w-0 space-y-2">
                   <Label htmlFor="project-name">项目名称</Label>

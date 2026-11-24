@@ -296,16 +296,33 @@ func (c *Client) Project(ctx context.Context, projectID int64, path string) (*Pr
 	return &out, nil
 }
 
-// ListBranches returns up to 100 branches. Projects with more than 100 branches
-// can still be used by typing a branch name; the selector shows the first page.
+// ListBranches follows GitLab pagination so projects with more than 100
+// branches (for example release/pre-release branches) are complete in the
+// selector. A hard page cap prevents a malformed server from looping forever.
 func (c *Client) ListBranches(ctx context.Context, projectID int64) ([]Branch, error) {
 	if projectID <= 0 {
 		return nil, fmt.Errorf("GitLab 项目 ID 不能为空")
 	}
-	var out []Branch
-	if err := c.request(ctx, http.MethodGet,
-		fmt.Sprintf("/projects/%d/repository/branches?per_page=100", projectID), &out); err != nil {
-		return nil, err
+	const perPage = 100
+	const maxPages = 200
+	out := make([]Branch, 0)
+	seen := make(map[string]bool)
+	for page := 1; page <= maxPages; page++ {
+		var batch []Branch
+		path := fmt.Sprintf("/projects/%d/repository/branches?per_page=%d&page=%d", projectID, perPage, page)
+		if err := c.request(ctx, http.MethodGet, path, &batch); err != nil {
+			return nil, err
+		}
+		for _, branch := range batch {
+			if branch.Name == "" || seen[branch.Name] {
+				continue
+			}
+			seen[branch.Name] = true
+			out = append(out, branch)
+		}
+		if len(batch) < perPage {
+			break
+		}
 	}
 	return out, nil
 }

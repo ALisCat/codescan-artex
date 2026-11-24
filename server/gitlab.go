@@ -203,7 +203,7 @@ func (s *Server) gitlabListBranches(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 	branches, err := c.ListBranches(ctx, id)
 	if err != nil {
