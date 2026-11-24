@@ -905,6 +905,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/projects/{id}/change-preview", s.requireAdmin(s.projectChangePreview))
 	mux.HandleFunc("POST /api/projects/{id}/review", s.requireAdmin(s.reviewProject))
 	mux.HandleFunc("GET /api/projects/{id}/audits", s.listProjectAudits)
+	mux.HandleFunc("GET /api/projects/{id}/scan-estimate", s.projectScanEstimate)
 	mux.HandleFunc("GET /api/projects/{id}/access-profile", s.requireAdmin(s.getProjectAccessProfile))
 	mux.HandleFunc("PUT /api/projects/{id}/access-profile", s.requireAdmin(s.putProjectAccessProfile))
 	mux.HandleFunc("GET /api/projects/{id}/audits/{runID}", s.getProjectAudit)

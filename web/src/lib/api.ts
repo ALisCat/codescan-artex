@@ -82,6 +82,7 @@ import type {
   GitLabTestResult,
   ChangePreview,
   ProjectAuditRun,
+  ScanEstimate,
   TaskProjectAudit,
   IncrementalGapCell,
   ManualCellSpec,
@@ -1232,6 +1233,7 @@ export const api = {
     get<{ cells: IncrementalGapCell[] }>(`/projects/${id}/incremental-runs/${runID}/new-applicable-cells`),
   projectAudits: (id: number) =>
     get<{ audits: ProjectAuditRun[] | null }>(`/projects/${id}/audits`).then((r) => arr(r.audits)),
+  projectScanEstimate: (id: number) => get<ScanEstimate>(`/projects/${id}/scan-estimate`),
   projectAudit: (id: number, runID: number) => get<ProjectAuditRun>(`/projects/${id}/audits/${runID}`),
   cancelProjectAudit: (id: number, runID: number) =>
     post<ProjectAuditRun>(`/projects/${id}/audits/${runID}/cancel`, {}),

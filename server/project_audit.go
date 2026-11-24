@@ -381,3 +381,73 @@ func (s *Server) getTaskProjectAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"audit": run, "project": p})
 }
+
+// projectScanEstimate exposes a rough cost preview from the latest matrix that
+// belongs to this project. It intentionally uses real ca_cells, not a source
+// heuristic, so the user can see the endpoint/intent explosion before resuming
+// a large scan.
+func (s *Server) projectScanEstimate(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeErr(w, http.StatusBadRequest, "项目 ID 不合法")
+		return
+	}
+	runs, err := s.m.pg.CodeProjects().ListAudits(id, 30)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var run *db.ProjectAuditRun
+	for i := range runs {
+		if runs[i].TaskID != nil && *runs[i].TaskID > 0 {
+			run = &runs[i]
+			break
+		}
+	}
+	if run == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"available": false})
+		return
+	}
+	t, ok := s.m.Task(strconv.FormatInt(*run.TaskID, 10))
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{"available": false})
+		return
+	}
+	taskID, _ := strconv.ParseInt(t.ID, 10, 64)
+	stats, err := s.m.PG().Cells().Stats(taskID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	merge := true
+	if v, ok, _ := s.m.PG().GetSetting("matrix_merge_dispatch"); ok && strings.TrimSpace(v) == "false" {
+		merge = false
+	}
+	endpoints, _, intents, err := s.m.PG().Cells().EstimateScan(taskID, merge)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	workers := s.m.Workers()
+	etaHours := 0.0
+	if workers > 0 {
+		etaHours = float64(intents) * 2.0 / 60.0 / float64(workers)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"available":      true,
+		"task_id":        t.ID,
+		"task_name":      t.Name,
+		"task_status":    s.resolvedTaskStatus(t),
+		"run_id":         run.ID,
+		"run_status":     run.Status,
+		"matrix_cells":   stats.Total,
+		"applicable":     stats.ApplicableTotal,
+		"not_applicable": stats.NA,
+		"unverified":     stats.Unverified,
+		"endpoints":      endpoints,
+		"intents":        intents,
+		"workers":        workers,
+		"merge_dispatch": merge,
+		"eta_hours":      etaHours,
+	})
+}

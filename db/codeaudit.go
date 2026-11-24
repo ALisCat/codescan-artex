@@ -633,3 +633,37 @@ WHERE task_id=$1 AND cell_key=$2 AND status NOT IN ('pending','dispatched','conf
 	n, _ := res.RowsAffected()
 	return n > 0, nil
 }
+
+// EstimateScan returns the matrix's endpoint and intent-group estimates. The
+// intent estimate follows the current merge-dispatch setting, not the worker
+// count; callers combine it with runtime concurrency to display an ETA.
+func (s *CellStore) EstimateScan(taskID int64, merge bool) (endpoints, applicable, intents int, err error) {
+	if taskID <= 0 {
+		return 0, 0, 0, fmt.Errorf("task_id 无效")
+	}
+	if err := s.db.QueryRow(`
+SELECT count(*), COALESCE(sum(n),0)::int
+FROM (
+    SELECT method, endpoint_url, count(*) AS n
+    FROM ca_cells
+    WHERE task_id=$1 AND eligibility='applicable'
+    GROUP BY method, endpoint_url
+) x`, taskID).Scan(&endpoints, &applicable); err != nil {
+		return 0, 0, 0, err
+	}
+	maxPer := 1
+	if merge {
+		maxPer = 4
+	}
+	if err := s.db.QueryRow(`
+SELECT COALESCE(sum(ceil(n::numeric / $2)),0)::int
+FROM (
+    SELECT method, endpoint_url, count(*) AS n
+    FROM ca_cells
+    WHERE task_id=$1 AND eligibility='applicable'
+    GROUP BY method, endpoint_url
+) x`, taskID, maxPer).Scan(&intents); err != nil {
+		return 0, 0, 0, err
+	}
+	return endpoints, applicable, intents, nil
+}

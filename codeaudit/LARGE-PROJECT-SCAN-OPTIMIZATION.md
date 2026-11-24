@@ -98,3 +98,10 @@ CallGraphDump / JavaParser：约 8 分 32 秒
 - `matrix_merge_dispatch` 已设为 `true`。
 - DB 矩阵导入已改为单事务提交。
 - 项目详情增加“结束审计”入口，取消 run 时暂停执行任务。
+
+### 已完成的扫描前预估
+
+- 新增 `GET /api/projects/{id}/scan-estimate`。
+- 基于最新矩阵统计接口数、可审计格、预计意图、worker 数、预计工时和 N/A/未验证数量。
+- 项目详情“发起全量审计”卡片显示上一次矩阵的扫描预估。
+- 当前项目 13 示例：3748 可审计格、2669 预计意图、3 worker、约 29.7 小时。

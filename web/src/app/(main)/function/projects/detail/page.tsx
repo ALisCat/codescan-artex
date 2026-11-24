@@ -46,6 +46,7 @@ import type {
   ManualCellSpec,
   ProjectAccessProfile,
   ProjectAuditRun,
+  ScanEstimate,
 } from "@/lib/types";
 
 function fmtTime(v?: string) {
@@ -257,6 +258,7 @@ function DetailInner() {
   const id = Number(sp.get("id") ?? "");
   const [p, setP] = React.useState<CodeProject | null>(null);
   const [audits, setAudits] = React.useState<ProjectAuditRun[]>([]);
+  const [scanEstimate, setScanEstimate] = React.useState<ScanEstimate | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [checking, setChecking] = React.useState(false);
   const [starting, setStarting] = React.useState(false);
@@ -297,10 +299,11 @@ function DetailInner() {
       return;
     }
     setLoading(true);
-    Promise.all([api.project(id), api.projectAudits(id).catch(() => [])])
-      .then(([x, runs]) => {
+    Promise.all([api.project(id), api.projectAudits(id).catch(() => []), api.projectScanEstimate(id).catch(() => null)])
+      .then(([x, runs, estimate]) => {
         setP(x);
         setAudits(runs);
+        setScanEstimate(estimate);
         setError("");
       })
       .catch((e) => setError((e as Error).message))
@@ -1532,6 +1535,22 @@ function DetailInner() {
               <div><span className="font-medium text-foreground">执行任务</span>：真正运行审计的 Agent 任务。</div>
             </div>
             <div className="rounded-lg border p-3">
+              {scanEstimate?.available && (
+                <div className="mb-3 rounded-md border bg-muted/20 px-2 py-1.5 text-[11px] text-muted-foreground">
+                  <div className="font-medium text-foreground">上次矩阵扫描预估</div>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                    <span>接口 {scanEstimate.endpoints}</span>
+                    <span>可审计 {scanEstimate.applicable}</span>
+                    <span>预计意图 {scanEstimate.intents}</span>
+                    <span>{scanEstimate.workers} worker</span>
+                    <span>约 {Math.ceil(scanEstimate.eta_hours ?? 0)} 小时</span>
+                  </div>
+                  <div className="mt-1">
+                    矩阵格 {scanEstimate.matrix_cells} · N/A {scanEstimate.not_applicable} · 未验证{" "}
+                    {scanEstimate.unverified}
+                  </div>
+                </div>
+              )}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <div className="text-sm font-medium">发起全量审计</div>

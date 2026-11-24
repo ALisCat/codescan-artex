@@ -2146,3 +2146,21 @@ export interface CaStats {
   by_vulnclass: Record<string, number>;
   coverage_pct: number;
 }
+
+export interface ScanEstimate {
+  available: boolean;
+  task_id?: string;
+  task_name?: string;
+  task_status?: string;
+  run_id?: number;
+  run_status?: string;
+  matrix_cells?: number;
+  applicable?: number;
+  not_applicable?: number;
+  unverified?: number;
+  endpoints?: number;
+  intents?: number;
+  workers?: number;
+  merge_dispatch?: boolean;
+  eta_hours?: number;
+}
