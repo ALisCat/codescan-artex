@@ -45,7 +45,5 @@ func isChainObservation(raw json.RawMessage) bool {
 		return true
 	}
 	text := payload.Summary + "\n" + payload.Detail
-	return strings.HasPrefix(strings.TrimSpace(payload.Summary), "延后观察") ||
-		strings.Contains(text, "链式") ||
-		strings.Contains(text, "二阶")
+	return strings.Contains(text, "链式") || strings.Contains(text, "二阶")
 }
