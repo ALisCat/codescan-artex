@@ -1084,6 +1084,66 @@ WHERE exploration_id = $1
 	return nodes, edges, edgeRows.Err()
 }
 
+// FindingChains returns the union of every finding's ancestry. It powers the
+// task graph's default "漏洞链路" view: only the exploration paths that ended
+// in a confirmed finding, without the unrelated branches of the full graph.
+func (s *ExplorationStore) FindingChains() ([]*Node, []Edge, error) {
+	nodeRows, err := s.db.Query(`
+WITH RECURSIVE anc(id) AS (
+    SELECT id
+    FROM exploration_nodes
+    WHERE exploration_id = $1 AND kind = 'finding'
+  UNION
+    SELECT e.src_id
+    FROM exploration_edges e
+    JOIN anc ON e.dst_id = anc.id
+    WHERE e.exploration_id = $1
+)
+SELECT `+nodeCols+`
+FROM exploration_nodes
+WHERE exploration_id = $1 AND id IN (SELECT id FROM anc)
+ORDER BY id`, s.expID)
+	if err != nil {
+		return nil, nil, err
+	}
+	nodes, err := scanNodes(nodeRows)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(nodes) == 0 {
+		return nil, nil, nil
+	}
+	edgeRows, err := s.db.Query(`
+WITH RECURSIVE anc(id) AS (
+    SELECT id
+    FROM exploration_nodes
+    WHERE exploration_id = $1 AND kind = 'finding'
+  UNION
+    SELECT e.src_id
+    FROM exploration_edges e
+    JOIN anc ON e.dst_id = anc.id
+    WHERE e.exploration_id = $1
+)
+SELECT src_id, rel, dst_id
+FROM exploration_edges
+WHERE exploration_id = $1
+  AND src_id IN (SELECT id FROM anc)
+  AND dst_id IN (SELECT id FROM anc)`, s.expID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer edgeRows.Close()
+	var edges []Edge
+	for edgeRows.Next() {
+		var e Edge
+		if err := edgeRows.Scan(&e.From, &e.Rel, &e.To); err != nil {
+			return nil, nil, err
+		}
+		edges = append(edges, e)
+	}
+	return nodes, edges, edgeRows.Err()
+}
+
 // FindingIntents maps each finding id to the intent that produced it (the
 // intent --yields--> finding edge; report_finding links it). Findings with no
 // producing intent are absent. Precise (JOIN, no edge-scan limit).

@@ -2136,6 +2136,12 @@ export interface CaCell {
   source_task_id?: number;
 }
 
+export interface CaEndpointRow {
+  method: string;
+  url: string;
+  cells: CaCell[];
+}
+
 export interface CaStats {
   total: number;
   applicable_total: number;
@@ -2144,6 +2150,7 @@ export interface CaStats {
   hold: number;
   by_status: Record<string, number>;
   by_vulnclass: Record<string, number>;
+  by_vulnclass_active?: Record<string, number>;
   coverage_pct: number;
 }
 

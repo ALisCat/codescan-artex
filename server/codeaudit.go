@@ -589,6 +589,40 @@ func (s *Server) caListCells(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"cells": cells, "count": len(cells)})
 }
 
+// caCellPage 按接口分页返回矩阵行，避免大项目一次下载数万格。
+func (s *Server) caCellPage(w http.ResponseWriter, r *http.Request) {
+	if currentUser(r) == nil {
+		writeErr(w, 401, "未授权")
+		return
+	}
+	t, ok := s.m.Task(r.PathValue("id"))
+	if !ok {
+		writeErr(w, 404, "task not found")
+		return
+	}
+	taskID, _ := strconv.ParseInt(t.ID, 10, 64)
+	page := atoiDefault(r.URL.Query().Get("page"), 1)
+	size := atoiDefault(r.URL.Query().Get("size"), 50)
+	includeNA := r.URL.Query().Get("include_na") == "1" || strings.EqualFold(r.URL.Query().Get("include_na"), "true")
+	rows, total, err := s.m.PG().Cells().EndpointPage(taskID, db.CellPageOptions{
+		Page:      page,
+		Size:      size,
+		Query:     r.URL.Query().Get("q"),
+		Kind:      r.URL.Query().Get("kind"),
+		IncludeNA: includeNA,
+	})
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"rows":  rows,
+		"total": total,
+		"page":  page,
+		"size":  size,
+	})
+}
+
 // caCellStats 返回覆盖率与分布。
 func (s *Server) caCellStats(w http.ResponseWriter, r *http.Request) {
 	if currentUser(r) == nil {

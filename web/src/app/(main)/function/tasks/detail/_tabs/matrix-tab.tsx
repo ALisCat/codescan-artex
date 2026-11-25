@@ -282,7 +282,6 @@ const FILTERS: { key: FilterKind; label: string }[] = [
 
 const ROW_H = 34;
 const SUMMARY_ROW_H = 58;
-const OVERSCAN = 8;
 const SUMMARY_GRID = "minmax(260px, 2.4fr) 72px 96px minmax(300px, 3fr) 72px";
 
 function rowMatches(r: RowData, kind: FilterKind): boolean {
@@ -324,36 +323,6 @@ function pretty(v: unknown): string {
   }
 }
 
-function useVirtualRows(count: number, rowHeight: number, ref: React.RefObject<HTMLDivElement | null>) {
-  const [range, setRange] = React.useState({ start: 0, end: 30 });
-  React.useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    let raf = 0;
-    const calc = () => {
-      raf = 0;
-      const top = el.scrollTop;
-      const h = el.clientHeight || 600;
-      const start = Math.max(0, Math.floor(top / rowHeight) - OVERSCAN);
-      const end = Math.min(count, Math.ceil((top + h) / rowHeight) + OVERSCAN);
-      setRange((prev) => (prev.start === start && prev.end === end ? prev : { start, end }));
-    };
-    calc();
-    const onScroll = () => {
-      if (!raf) raf = requestAnimationFrame(calc);
-    };
-    el.addEventListener("scroll", onScroll, { passive: true });
-    const ro = new ResizeObserver(calc);
-    ro.observe(el);
-    return () => {
-      el.removeEventListener("scroll", onScroll);
-      if (raf) cancelAnimationFrame(raf);
-      ro.disconnect();
-    };
-  }, [count, rowHeight, ref]);
-  return range;
-}
-
 export function MatrixTab({ taskId }: { taskId: string }) {
   const [cells, setCells] = React.useState<CaCell[]>([]);
   const [stats, setStats] = React.useState<CaStats | null>(null);
@@ -368,27 +337,28 @@ export function MatrixTab({ taskId }: { taskId: string }) {
   const [kind, setKind] = React.useState<FilterKind>("all");
   const [showNaRows, setShowNaRows] = React.useState(false);
   const [showAllVulns, setShowAllVulns] = React.useState(false);
+  const [page, setPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState(50);
+  const [serverTotal, setServerTotal] = React.useState(0);
 
   const [cellSel, setCellSel] = React.useState<CaCell | null>(null);
   const [endpointKey, setEndpointKey] = React.useState<string | null>(null);
 
   const scrollRef = React.useRef<HTMLDivElement>(null);
 
+  // 统计与列表分开轮询：列表按接口分页，避免大项目一次下载数万格。
   React.useEffect(() => {
     let active = true;
     const load = () =>
-      Promise.all([api.caCells(taskId), api.caStats(taskId)])
-        .then(([cs, st]) => {
+      api
+        .caStats(taskId)
+        .then((st) => {
           if (!active) return;
-          setCells(cs);
           setStats(st);
           setErr(null);
         })
         .catch((e) => {
           if (active) setErr(String(e?.message ?? e));
-        })
-        .finally(() => {
-          if (active) setLoading(false);
         });
     void load();
     const timer = setInterval(load, 5000);
@@ -397,6 +367,65 @@ export function MatrixTab({ taskId }: { taskId: string }) {
       clearInterval(timer);
     };
   }, [taskId, tick]);
+
+  // 默认的接口/摘要视图走服务端分页；前缀聚合仍需要全量行做分组，
+  // 只在切到前缀视图时拉一次全量矩阵。
+  React.useEffect(() => {
+    if (view !== "prefix") return;
+    let active = true;
+    setLoading(true);
+    api
+      .caCells(taskId)
+      .then((cs) => {
+        if (!active) return;
+        setCells(cs);
+        setServerTotal(0);
+        setErr(null);
+      })
+      .catch((e) => {
+        if (active) setErr(String(e?.message ?? e));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [taskId, tick, view]);
+
+  React.useEffect(() => {
+    if (view === "prefix") return;
+    let active = true;
+    const load = () => {
+      setLoading(true);
+      return api
+        .caCellPage(taskId, {
+          page,
+          size: pageSize,
+          q,
+          kind,
+          includeNa: showNaRows,
+        })
+        .then((r) => {
+          if (!active) return;
+          setCells(r.rows.flatMap((row) => row.cells));
+          setServerTotal(r.total);
+          setErr(null);
+        })
+        .catch((e) => {
+          if (active) setErr(String(e?.message ?? e));
+        })
+        .finally(() => {
+          if (active) setLoading(false);
+        });
+    };
+    void load();
+    const timer = setInterval(load, 15000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [taskId, tick, view, page, pageSize, q, kind, showNaRows]);
 
   React.useEffect(() => {
     setCellSel((prev) => {
@@ -428,6 +457,9 @@ export function MatrixTab({ taskId }: { taskId: string }) {
   }, [cells]);
 
   const rows = React.useMemo(() => {
+    // 接口/摘要视图的筛选、排序和分页都由服务端完成；前缀聚合仍在前端
+    // 对一次拉取的全量行做分组。
+    if (view !== "prefix") return allRows;
     const ql = q.trim().toLowerCase();
     let rs = allRows.filter((r) => {
       if (ql && !r.key.toLowerCase().includes(ql)) return false;
@@ -445,25 +477,21 @@ export function MatrixTab({ taskId }: { taskId: string }) {
       return a.key.localeCompare(b.key);
     });
     return rs;
-  }, [allRows, q, kind, showNaRows]);
+  }, [allRows, q, kind, showNaRows, view]);
 
-  const allVulns = React.useMemo(
-    () => mergeVulns(cells.map((c) => c.vulnclass)),
-    [cells],
-  );
+  const allVulns = React.useMemo(() => {
+    const statKeys = stats ? Object.keys(stats.by_vulnclass ?? {}) : [];
+    return mergeVulns(statKeys.length > 0 ? statKeys : cells.map((c) => c.vulnclass));
+  }, [cells, stats]);
 
   // 表格默认只给“有分析结果”的类型留列：
   // possible/pending/dispatched/confirmed/clean/needs_more/hold 都算；
   // na（结构上不可能）和 unverified（未验证）默认收进右侧抽屉。
   const visibleVulns = React.useMemo(() => {
-    if (showAllVulns || cells.length === 0) return allVulns;
-    const keep = new Set(
-      cells
-        .filter((c) => c.status !== "na" && c.status !== "unverified")
-        .map((c) => c.vulnclass),
-    );
-    return allVulns.filter((v) => keep.has(v.key));
-  }, [allVulns, cells, showAllVulns]);
+    if (showAllVulns || !stats) return allVulns;
+    const active = stats.by_vulnclass_active ?? stats.by_vulnclass ?? {};
+    return allVulns.filter((v) => (active[v.key] ?? 0) > 0);
+  }, [allVulns, stats, showAllVulns]);
   const hiddenVulnCount = allVulns.length - visibleVulns.length;
   const tableVulns = React.useMemo(
     () => (visibleVulns.length > 0 ? visibleVulns : [{ key: "__none__", label: "—" }]),
@@ -499,20 +527,33 @@ export function MatrixTab({ taskId }: { taskId: string }) {
   }, [view, rows, tableVulns]);
 
   React.useEffect(() => {
+    setPage(1);
+  }, [q, kind, view, showNaRows, displayMode, pageSize]);
+
+  React.useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
-  }, [q, kind, view, showNaRows, displayMode]);
+  }, [q, kind, view, showNaRows, displayMode, page, pageSize]);
 
   const by = stats?.by_status ?? {};
   const dispatchCount = (by.pending ?? 0) + (by.dispatched ?? 0);
   const doneCount = (by.confirmed ?? 0) + (by.clean ?? 0) + (by.needs_more ?? 0);
 
   const summaryView = displayMode === "summary";
-  const virtual = useVirtualRows(
-    summaryView ? rows.length : view === "endpoint" ? rows.length : 0,
-    summaryView ? SUMMARY_ROW_H : ROW_H,
-    scrollRef,
+  const prefixKeys = React.useMemo(
+    () => (grouped ? [...grouped.keys()].sort() : []),
+    [grouped],
   );
-  const visibleRows = summaryView || view === "endpoint" ? rows.slice(virtual.start, virtual.end) : [];
+  const totalRows = !summaryView && view === "prefix" ? prefixKeys.length : serverTotal;
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * pageSize;
+  // 接口/摘要视图的 rows 已是当前服务端页；前缀视图在客户端按前缀分页。
+  const pageRows = summaryView || view === "endpoint" ? rows : [];
+  const pagePrefixKeys = !summaryView && view === "prefix" ? prefixKeys.slice(pageStart, pageStart + pageSize) : [];
+
+  React.useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   const endpointRow = endpointKey ? rowMap.get(endpointKey) ?? null : null;
 
@@ -577,7 +618,10 @@ export function MatrixTab({ taskId }: { taskId: string }) {
             <div className="flex rounded border">
               <button
                 type="button"
-                onClick={() => setDisplayMode("summary")}
+                onClick={() => {
+                  setDisplayMode("summary");
+                  if (view === "prefix") setView("endpoint");
+                }}
                 className={cn("px-2 py-1", summaryView && "bg-primary/10 font-medium text-primary")}
               >
                 摘要
@@ -644,10 +688,7 @@ export function MatrixTab({ taskId }: { taskId: string }) {
               </span>
             )}
             <span className="text-muted-foreground">
-              行 {!summaryView && view === "prefix" ? grouped?.size ?? 0 : rows.length}
-              {(summaryView || view === "endpoint") && rows.length > visibleRows.length
-                ? `（已渲染 ${visibleRows.length}）`
-                : ""}
+              行 {totalRows} · 第 {currentPage}/{totalPages} 页
             </span>
           </div>
         </CardHeader>
@@ -668,8 +709,7 @@ export function MatrixTab({ taskId }: { taskId: string }) {
                     <div>摘要</div>
                     <div className="text-center">操作</div>
                   </div>
-                  <div style={{ height: virtual.start * SUMMARY_ROW_H }} />
-                  {visibleRows.map((r) => (
+                  {pageRows.map((r) => (
                     <SummaryRow
                       key={r.key}
                       r={r}
@@ -677,7 +717,6 @@ export function MatrixTab({ taskId }: { taskId: string }) {
                       onOpen={() => setEndpointKey(r.key)}
                     />
                   ))}
-                  <div style={{ height: Math.max(0, rows.length - virtual.end) * SUMMARY_ROW_H }} />
                 </>
               )}
 
@@ -701,8 +740,7 @@ export function MatrixTab({ taskId }: { taskId: string }) {
 
               {view === "endpoint" && (
                 <>
-                  <div style={{ height: virtual.start * ROW_H }} />
-                  {visibleRows.map((r) => (
+                  {pageRows.map((r) => (
                     <div
                       key={r.key}
                       className="grid items-center border-b border-border/60 hover:bg-muted/30"
@@ -748,12 +786,11 @@ export function MatrixTab({ taskId }: { taskId: string }) {
                       <RowSummary r={r} onClick={() => setEndpointKey(r.key)} />
                     </div>
                   ))}
-                  <div style={{ height: Math.max(0, rows.length - virtual.end) * ROW_H }} />
                 </>
               )}
 
               {view === "prefix" &&
-                [...(grouped?.keys() ?? [])].sort().map((p) => {
+                pagePrefixKeys.map((p) => {
                   const g = grouped!.get(p)!;
                   return (
                     <div
@@ -810,6 +847,64 @@ export function MatrixTab({ taskId }: { taskId: string }) {
             <p className="py-8 text-center text-sm text-muted-foreground">
               没有匹配的格子。试试切换筛选条件、显示全不适用行，或换个搜索词。
             </p>
+          )}
+          {totalRows > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t px-3 py-2 text-xs">
+              <span className="text-muted-foreground">
+                共 {totalRows} 行 · 第 {currentPage}/{totalPages} 页
+              </span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <label className="text-muted-foreground flex items-center gap-1">
+                  每页
+                  <select
+                    value={pageSize}
+                    onChange={(e) => setPageSize(Number(e.target.value))}
+                    className="h-7 rounded border bg-background px-1.5"
+                  >
+                    {[20, 50, 100, 200].map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setPage(1)}
+                  disabled={currentPage <= 1}
+                  className="h-7 rounded border px-2 disabled:opacity-40"
+                >
+                  首页
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage <= 1}
+                  className="h-7 rounded border px-2 disabled:opacity-40"
+                >
+                  上一页
+                </button>
+                <span className="min-w-16 text-center tabular-nums">
+                  {currentPage} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage >= totalPages}
+                  className="h-7 rounded border px-2 disabled:opacity-40"
+                >
+                  下一页
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPage(totalPages)}
+                  disabled={currentPage >= totalPages}
+                  className="h-7 rounded border px-2 disabled:opacity-40"
+                >
+                  末页
+                </button>
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>

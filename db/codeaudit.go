@@ -455,18 +455,19 @@ WHERE task_id=$1 AND cell_key=$2`, taskID, cellKey, verdict, evidence, reason)
 
 // CellStats 返回按状态/类型的统计。
 type CellStats struct {
-	Total           int            `json:"total"`
-	ApplicableTotal int            `json:"applicable_total"`
-	NA              int            `json:"not_applicable"`
-	Unverified      int            `json:"unverified"`
-	Hold            int            `json:"hold"`
-	ByStatus        map[string]int `json:"by_status"`
-	ByVulnClass     map[string]int `json:"by_vulnclass"`
-	CoveragePct     float64        `json:"coverage_pct"`
+	Total             int            `json:"total"`
+	ApplicableTotal   int            `json:"applicable_total"`
+	NA                int            `json:"not_applicable"`
+	Unverified        int            `json:"unverified"`
+	Hold              int            `json:"hold"`
+	ByStatus          map[string]int `json:"by_status"`
+	ByVulnClass       map[string]int `json:"by_vulnclass"`
+	ByVulnClassActive map[string]int `json:"by_vulnclass_active"`
+	CoveragePct       float64        `json:"coverage_pct"`
 }
 
 func (s *CellStore) Stats(taskID int64) (*CellStats, error) {
-	st := &CellStats{ByStatus: map[string]int{}, ByVulnClass: map[string]int{}}
+	st := &CellStats{ByStatus: map[string]int{}, ByVulnClass: map[string]int{}, ByVulnClassActive: map[string]int{}}
 	rows, err := s.db.Query(`SELECT status, vulnclass, eligibility, count(*) FROM ca_cells WHERE task_id=$1 GROUP BY 1,2,3`, taskID)
 	if err != nil {
 		return nil, err
@@ -482,6 +483,9 @@ func (s *CellStore) Stats(taskID int64) (*CellStats, error) {
 		st.Total += n
 		st.ByStatus[status] += n
 		st.ByVulnClass[vuln] += n
+		if status != "na" && status != "unverified" {
+			st.ByVulnClassActive[vuln] += n
+		}
 		if elig == "not_applicable" {
 			st.NA += n
 			continue
@@ -503,6 +507,142 @@ func (s *CellStore) Stats(taskID int64) (*CellStats, error) {
 		st.CoveragePct = float64(done) / float64(st.ApplicableTotal) * 100
 	}
 	return st, rows.Err()
+}
+
+// CellEndpointRow is one endpoint row of the paginated matrix list.
+type CellEndpointRow struct {
+	Method string `json:"method"`
+	URL    string `json:"url"`
+	Cells  []Cell `json:"cells"`
+}
+
+// CellPageOptions narrows the matrix endpoint list. The matrix tab pages by
+// endpoint, not by raw cell: one endpoint may have up to 21 vuln-class cells.
+type CellPageOptions struct {
+	Page      int
+	Size      int
+	Query     string
+	Kind      string
+	IncludeNA bool
+}
+
+// EndpointPage returns one page of endpoint rows plus the total endpoint count.
+// Filtering/sorting happens in SQL so the UI never downloads the whole matrix.
+func (s *CellStore) EndpointPage(taskID int64, opts CellPageOptions) ([]CellEndpointRow, int, error) {
+	if taskID <= 0 {
+		return nil, 0, fmt.Errorf("task_id 无效")
+	}
+	if opts.Page < 1 {
+		opts.Page = 1
+	}
+	if opts.Size <= 0 {
+		opts.Size = 50
+	}
+	if opts.Size > 200 {
+		opts.Size = 200
+	}
+	args := []any{taskID}
+	var where []string
+	if q := strings.TrimSpace(opts.Query); q != "" {
+		args = append(args, "%"+q+"%")
+		where = append(where, fmt.Sprintf("(method || ' ' || endpoint_url) ILIKE $%d", len(args)))
+	}
+	switch opts.Kind {
+	case "dispatch":
+		where = append(where, "(active > 0)")
+	case "hold":
+		where = append(where, "(hold > 0)")
+	case "confirmed":
+		where = append(where, "(confirmed > 0)")
+	case "unverified":
+		where = append(where, "(unverified > 0)")
+	case "done":
+		where = append(where, "(confirmed + clean + needs_more > 0)")
+	}
+	if !opts.IncludeNA {
+		where = append(where, "(content > 0)")
+	}
+	whereSQL := ""
+	if len(where) > 0 {
+		whereSQL = " WHERE " + strings.Join(where, " AND ")
+	}
+	limitArg := len(args) + 1
+	offsetArg := len(args) + 2
+	args = append(args, opts.Size, (opts.Page-1)*opts.Size)
+	q := `
+WITH agg AS (
+  SELECT method, endpoint_url,
+         count(*) FILTER (WHERE status = 'confirmed') AS confirmed,
+         count(*) FILTER (WHERE status IN ('pending','dispatched')) AS active,
+         count(*) FILTER (WHERE status = 'hold') AS hold,
+         count(*) FILTER (WHERE status = 'unverified') AS unverified,
+         count(*) FILTER (WHERE status = 'clean') AS clean,
+         count(*) FILTER (WHERE status = 'needs_more') AS needs_more,
+         count(*) FILTER (WHERE status <> 'na') AS content,
+         max(priority) AS weight
+  FROM ca_cells
+  WHERE task_id=$1
+  GROUP BY 1,2
+)
+SELECT method, endpoint_url, count(*) OVER() AS total
+FROM agg` + whereSQL + fmt.Sprintf(`
+ORDER BY confirmed DESC, active DESC, weight DESC, method ASC, endpoint_url ASC
+LIMIT $%d OFFSET $%d`, limitArg, offsetArg)
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []CellEndpointRow
+	total := 0
+	for rows.Next() {
+		var r CellEndpointRow
+		if err := rows.Scan(&r.Method, &r.URL, &total); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	if len(out) == 0 {
+		return out, total, nil
+	}
+	methods := make([]string, 0, len(out))
+	urls := make([]string, 0, len(out))
+	for _, r := range out {
+		methods = append(methods, r.Method)
+		urls = append(urls, r.URL)
+	}
+	cellRows, err := s.db.Query(`
+SELECT c.id, c.task_id, c.cell_key, c.endpoint_url, c.method, c.vulnclass, c.eligibility,
+       c.priority, c.bucket, c.direction, c.checklist, c.hints, c.hints_note, c.reason, c.trace,
+       c.status, COALESCE(c.verdict,''), c.evidence, c.intent_id, c.attempts, c.last_error, c.created_at, c.updated_at,
+       COALESCE(c.origin,'matrix'), c.source_task_id
+FROM ca_cells c
+JOIN unnest($2::text[], $3::text[]) AS p(m, u)
+  ON c.method=p.m AND c.endpoint_url=p.u
+WHERE c.task_id=$1
+ORDER BY c.priority DESC, c.id`, taskID, methods, urls)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer cellRows.Close()
+	cells, err := scanCells(cellRows)
+	if err != nil {
+		return nil, 0, err
+	}
+	byKey := make(map[string]*CellEndpointRow, len(out))
+	for i := range out {
+		byKey[out[i].Method+" "+out[i].URL] = &out[i]
+	}
+	for i := range cells {
+		c := cells[i]
+		if row := byKey[c.Method+" "+c.EndpointURL]; row != nil {
+			row.Cells = append(row.Cells, c)
+		}
+	}
+	return out, total, nil
 }
 
 // CellGroup 是同一接口的待办格子集合（派发时合并成一个意图，避免同一处代码被

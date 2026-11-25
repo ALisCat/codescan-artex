@@ -130,6 +130,7 @@ import type {
   WorkspaceFile,
   WorkspaceListing,
   CaCell,
+  CaEndpointRow,
   CaStats,
 } from "@/lib/types";
 
@@ -1012,6 +1013,20 @@ export const api = {
   // 二开：审计矩阵
   caCells: (taskId: string) =>
     get<{ cells: CaCell[]; count: number }>(`/codeaudit/tasks/${taskId}/cells`).then((r) => r.cells ?? []),
+  caCellPage: (
+    taskId: string,
+    opts: { page: number; size: number; q?: string; kind?: string; includeNa?: boolean },
+  ) => {
+    const q = new URLSearchParams();
+    q.set("page", String(opts.page));
+    q.set("size", String(opts.size));
+    if (opts.q?.trim()) q.set("q", opts.q.trim());
+    if (opts.kind && opts.kind !== "all") q.set("kind", opts.kind);
+    if (opts.includeNa) q.set("include_na", "1");
+    return get<{ rows: CaEndpointRow[]; total: number; page: number; size: number }>(
+      `/codeaudit/tasks/${taskId}/cells/page?${q.toString()}`,
+    );
+  },
   caStats: (taskId: string) => get<CaStats>(`/codeaudit/tasks/${taskId}/stats`),
   caManualAudit: (taskId: string, cellKey: string, suggestion: string) =>
     post<{ ok: boolean; intent_id: number; task_status: string; paused: boolean; queued: boolean }>(
@@ -1043,7 +1058,13 @@ export const api = {
     get<ConvTokenSummary[]>("/tokens/conversations")
       .then(arr)
       .catch(() => [] as ConvTokenSummary[]),
-  explorationGraph: (task?: string) => get<{ nodes: TaskNode[]; edges: Edge[] }>(`/exploration/graph${tq(task)}`),
+  explorationGraph: (task?: string, view: "full" | "vuln" = "full") => {
+    const q = new URLSearchParams();
+    if (task) q.set("task", task);
+    if (view !== "full") q.set("view", view);
+    const qs = q.toString();
+    return get<{ nodes: TaskNode[]; edges: Edge[] }>(`/exploration/graph${qs ? `?${qs}` : ""}`);
+  },
   // 播报板:服务端按创建顺序分页的探索节点(默认最新在前)。
   explorationNodes: (task: string, query: ExplorationNodeQuery = {}) => {
     const q = new URLSearchParams();

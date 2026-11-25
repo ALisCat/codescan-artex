@@ -736,6 +736,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/codeaudit/tasks/{id}/cells/audit", s.caManualAudit)
 	mux.HandleFunc("POST /api/codeaudit/tasks/{id}/cells/manual-add", s.caManualAddCell)
 	mux.HandleFunc("GET /api/codeaudit/tasks/{id}/cells", s.caListCells)
+	mux.HandleFunc("GET /api/codeaudit/tasks/{id}/cells/page", s.caCellPage)
 	mux.HandleFunc("GET /api/codeaudit/tasks/{id}/stats", s.caCellStats)
 	mux.HandleFunc("POST /api/codeaudit/tasks/{id}/verdict", s.caSubmitVerdict)
 	mux.HandleFunc("POST /api/tasks/{id}/department", s.requireAdmin(s.setTaskDepartment))
@@ -3073,19 +3074,28 @@ func taskIntentHistoryPage(store *db.ExplorationStore, before int64, limit int, 
 	}
 }
 
-// explorationGraph returns the whole exploration chain (task graph) as nodes+edges.
+// explorationGraph returns the task graph as nodes+edges. ?view=vuln restricts it
+// to the union of all confirmed findings and their upstream exploration chains.
 func (s *Server) explorationGraph(w http.ResponseWriter, r *http.Request) {
 	t := s.taskFromQuery(r)
 	if t == nil {
 		writeJSON(w, 200, map[string]any{"nodes": []any{}, "edges": []any{}})
 		return
 	}
-	nodes, err := t.Store.Nodes(2000)
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
+	// 默认展示全量探索图；view=vuln 只返回所有 confirmed finding 的上游链路，
+	// 用于任务图的“漏洞链路”视图。继承来源也按同一口径取子图。
+	findingsOnly := strings.EqualFold(r.URL.Query().Get("view"), "vuln")
+	var nodes []*db.Node
+	var edges []db.Edge
+	var err error
+	if findingsOnly {
+		nodes, edges, err = t.Store.FindingChains()
+	} else {
+		nodes, err = t.Store.Nodes(2000)
+		if err == nil {
+			edges, err = t.Store.Edges(5000)
+		}
 	}
-	edges, err := t.Store.Edges(5000)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -3096,14 +3106,18 @@ func (s *Server) explorationGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, source := range sources {
-		sourceNodes, nodeErr := source.Store.Nodes(2000)
-		if nodeErr != nil {
-			writeErr(w, 500, nodeErr.Error())
-			return
+		var sourceNodes []*db.Node
+		var sourceEdges []db.Edge
+		if findingsOnly {
+			sourceNodes, sourceEdges, err = source.Store.FindingChains()
+		} else {
+			sourceNodes, err = source.Store.Nodes(2000)
+			if err == nil {
+				sourceEdges, err = source.Store.Edges(5000)
+			}
 		}
-		sourceEdges, edgeErr := source.Store.Edges(5000)
-		if edgeErr != nil {
-			writeErr(w, 500, edgeErr.Error())
+		if err != nil {
+			writeErr(w, 500, err.Error())
 			return
 		}
 		sourceNodes, sourceEdges = inheritedGraphSnapshot(sourceNodes, sourceEdges, source.Task.TaskID)
